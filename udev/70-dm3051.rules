@@ -1,0 +1,3 @@
+# Desktop logind user access. The actual tested hardware has VID 0400, not 1ab1.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="0400", ATTR{idProduct}=="09c4", TAG+="uaccess"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1ab1", ATTR{idProduct}=="09c4", TAG+="uaccess"
