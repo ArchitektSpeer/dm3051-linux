@@ -66,7 +66,7 @@ def gui(args):
     ttk.Label(top, textvariable=stats_text).pack(anchor="w", pady=(8, 0))
     canvas = tk.Canvas(root, background="#101820", highlightthickness=0)
     canvas.pack(fill="both", expand=True, padx=12, pady=8)
-    ttk.Label(root, text="曲线显示当前功能的最近 300 点；内存保留最近 10000 条，长时间采集请用“实时记录”。设置均经仪器读回确认。").pack(pady=8)
+    ttk.Label(root, text="曲线显示当前功能的最近 300 点；内存保留最近 10000 条，长时间采集请用“实时记录”。设置均经仪器读回确认（自动量程除外）。").pack(pady=8)
 
     def limits():
         """Parsed (lower, upper); an unparsable field is ignored and shown as such."""
