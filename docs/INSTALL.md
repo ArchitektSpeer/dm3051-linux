@@ -58,6 +58,6 @@ SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1ab1", ATTR{idPro
 | `--trace` | 报文日志输出到 stderr；可用 `2>trace.log` 保存 |
 | `--demo` | 使用模拟仪器，完全不访问 USB |
 
-配置参数需要与 `--cli`、`--status` 或 `--configure-only` 一起使用，执行顺序为触发 → 功能 → 量程 → 分辨率，每项读回确认，失败时退出码 1。
+配置参数需要与 `--cli`、`--status` 或 `--configure-only` 一起使用，先校验量程/分辨率对目标功能是否有效（无效则不发送任何设置），再按触发 → 功能 → 量程 → 分辨率执行；除自动量程外每项读回确认，失败时退出码 1。`--demo` 不能与 `--list` 同用。
 
 CLI 正常退出码 0，运行错误 1，Ctrl+C 中断 130。GUI 通信错误在状态栏显示并停止线程，应用仍保持打开供保存历史数据；设置未生效只显示提示，不断开连接。

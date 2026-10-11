@@ -2,6 +2,7 @@
 from collections import namedtuple
 import logging
 import math
+import re
 import struct
 import time
 
@@ -16,6 +17,10 @@ class SettingError(InstrumentError):
     """A setting was refused, unsupported, or not confirmed by readback; the link is still usable."""
 
 
+class NotLiveError(InstrumentError):
+    """Trigger source is not AUTO, so readings are a held value, not new measurements."""
+
+
 class RejectedError(InstrumentError):
     """The instrument answered E (or R for an inactive range); often transient after a mode change."""
 
@@ -23,7 +28,8 @@ class RejectedError(InstrumentError):
 Function = namedtuple("Function", "token label unit path ranges resolution excites verified")
 Function.__doc__ = """One RIGOL-mode measurement function.
 
-token: canonical :FUNCtion? reply; path: SCPI node after :FUNCtion/:MEASure;
+token: short name used in CSV/CLI (firmware long replies are mapped by _ALIASES);
+path: SCPI node after :FUNCtion/:MEASure;
 ranges: labels for range indices 0..n (empty = no range control here);
 resolution: has :RESOlution:<path>; excites: drives a test current through the inputs;
 verified: switch and reading checked on Linux hardware (firmware 03.03.00.03.02.00)."""
@@ -33,20 +39,25 @@ FUNCTIONS = (
     Function("ACV", "交流电压", "V", "VOLTage:AC", ("200 mV", "2 V", "20 V", "200 V", "750 V"), True, False, True),
     Function("DCI", "直流电流", "A", "CURRent:DC", ("2 mA", "20 mA", "200 mA", "1 A", "10 A"), True, False, True),
     Function("ACI", "交流电流", "A", "CURRent:AC", ("20 mA", "200 mA", "2 A", "10 A"), True, False, True),
+    # The manual lists a 100 MΩ range (6); firmware 03.03 clamps 6 to 5.
     Function("2WR", "两线电阻", "Ω", "RESistance",
-             ("200 Ω", "2 kΩ", "20 kΩ", "200 kΩ", "1 MΩ", "10 MΩ", "100 MΩ"), True, True, False),
+             ("200 Ω", "2 kΩ", "20 kΩ", "200 kΩ", "1 MΩ", "10 MΩ"), True, True, True),
     Function("4WR", "四线电阻", "Ω", "FRESistance",
-             ("200 Ω", "2 kΩ", "20 kΩ", "200 kΩ", "1 MΩ", "10 MΩ", "100 MΩ"), True, True, False),
+             ("200 Ω", "2 kΩ", "20 kΩ", "200 kΩ", "1 MΩ", "10 MΩ"), True, True, True),
     # The manual says FREQ/PERI; firmware 03.03 answers FREQUENCY/PERIOD. Their RANGe? replies are not ranges.
     Function("FREQUENCY", "频率", "Hz", "FREQuency", (), False, False, True),
     Function("PERIOD", "周期", "s", "PERiod", (), False, False, True),
-    Function("CONT", "通断", "Ω", "CONTinuity", (), False, True, False),
-    Function("DIODE", "二极管", "V", "DIODe", (), False, True, False),
+    Function("CONT", "通断", "Ω", "CONTinuity", (), False, True, True),
+    Function("DIODE", "二极管", "V", "DIODe", (), False, True, True),
     Function("CAP", "电容", "F", "CAPacitance",
-             ("2 nF", "20 nF", "200 nF", "2 µF", "20 µF", "200 µF"), True, True, False),
-    Function("RATIO", "直流电压比", "", "VOLTage:DC:RATIo", (), True, False, False),
+             ("2 nF", "20 nF", "200 nF", "2 µF", "20 µF", "200 µF"), True, True, True),
+    Function("RATIO", "直流电压比", "", "VOLTage:DC:RATIo", (), True, False, True),
 )
-_ALIASES = {"FREQ": "FREQUENCY", "PERI": "PERIOD"}
+# Manual names, and the long :FUNCtion? replies of firmware 03.03.
+_ALIASES = {"FREQ": "FREQUENCY", "PERI": "PERIOD", "RESISTANCE": "2WR", "FRESISTANCE": "4WR",
+            "CONTINUITY": "CONT", "CAPACITANCE": "CAP"}
+# Open circuit / overload in resistance, continuity and diode modes (the panel's -8.888 display).
+OPEN_SENTINEL = -8.888e3
 RESOLUTIONS = ("4½", "5½", "6½")
 
 
@@ -61,15 +72,20 @@ def lookup_function(name):
 
 
 Reading = namedtuple("Reading", "function value raw")
-Reading.__doc__ = "value is None when the instrument reports overload (|x| >= 9e37 or non-finite)."
+Reading.__doc__ = "value is None on overload/open circuit (|x| >= 9e37, -8.888e3 or non-finite)."
+
+
+# Firmware 03.03 always sends readings as d.dddddde±dd. Range/resolution replies are bare
+# integers, so requiring an exponent stops a late "1" from being recorded as 1 V.
+_READING = re.compile(r"[+-]?\d+(\.\d*)?[eE][+-]?\d+")
 
 
 def parse_reading(raw):
-    try:
-        value = float(raw)
-    except ValueError:
-        raise InstrumentError(f"Unparseable reading: {raw!r}") from None
-    return None if not math.isfinite(value) or abs(value) >= 9e37 else value
+    if not _READING.fullmatch(raw.strip()):
+        # Usually a late reply to another query; transient like E.
+        raise RejectedError(f"Unexpected reading format: {raw!r}")
+    value = float(raw)
+    return None if not math.isfinite(value) or abs(value) >= 9e37 or value == OPEN_SENTINEL else value
 
 
 def header(message, tag, length):
@@ -138,7 +154,10 @@ class LegacyProtocol:
         while len(payload) < length:
             remaining = length - len(payload)
             payload.extend(self._read((remaining + 3) // 4 * 4, deadline)[:remaining])
-        return payload.decode("ascii").strip()
+        try:
+            return payload.decode("ascii").strip()
+        except UnicodeDecodeError:
+            raise InstrumentError(f"Non-ASCII reply: {bytes(payload[:32]).hex(' ')}") from None
 
     def query(self, command):
         if "?" not in command:
@@ -193,7 +212,12 @@ class MeterControl:
             time.sleep(self.poll_s)
 
     def function(self):
-        return lookup_function(self.query(":FUNCtion?"))
+        reply = self.query(":FUNCtion?")
+        try:
+            return lookup_function(reply)
+        except InstrumentError:
+            # Usually a late reply to another query; treated like E so callers retry.
+            raise RejectedError(f"Unexpected :FUNCtion? reply {reply!r}") from None
 
     def measure(self, expected=None):
         """One reading of the current panel function. Any :MEASure:<x>? returns the
@@ -214,7 +238,13 @@ class MeterControl:
 
     def set_function(self, name):
         function = lookup_function(name)
-        self._apply(f":FUNCtion:{function.path}", ":FUNCtion?", lambda r: lookup_function(r) == function, f"Function {function.token}")
+
+        def accept(reply):
+            try:
+                return lookup_function(reply) == function
+            except InstrumentError:  # a stray reply: busy, not "a different value", so no resend
+                raise RejectedError(f"Unexpected :FUNCtion? reply {reply!r}") from None
+        self._apply(f":FUNCtion:{function.path}", ":FUNCtion?", accept, f"Function {function.token}")
         return function
 
     def range_index(self, function=None):
@@ -275,7 +305,7 @@ class MeterControl:
         """Raise unless the instrument updates readings by itself (auto trigger)."""
         source = self.trigger_source()
         if source != "AUTO":
-            raise InstrumentError(f"Trigger source is {source}; readings would be a held value. "
+            raise NotLiveError(f"Trigger source is {source}; readings would be a held value. "
                                   "Switch to auto trigger (--trigger AUTO or the GUI button).")
 
     def status(self):

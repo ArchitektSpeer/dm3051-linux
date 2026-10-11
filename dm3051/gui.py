@@ -7,7 +7,7 @@ import queue
 import threading
 import time
 from .app import FIELDS, Sampler, Stats, format_value, open_device
-from .usb_device import FUNCTIONS, RESOLUTIONS, InstrumentError, RejectedError, SettingError, lookup_function
+from .usb_device import FUNCTIONS, RESOLUTIONS, NotLiveError, RejectedError, SettingError, lookup_function
 
 AUTO = "自动"
 
@@ -114,35 +114,39 @@ def gui(args):
             canvas.create_oval(x - 3, y - 3, x + 3, y + 3, fill="#59dfb0")
 
     def read_status(device):
+        """True when the panel state was refreshed; on False the worker retries after later samples."""
         for _ in range(5):
             try:
                 events.put(("status", device.status()))
-                return
+                return True
             except RejectedError:
                 time.sleep(0.2)  # Instrument still switching.
         events.put(("unlock", None))
+        return False
 
     def apply(device, name, value):
         setter = {"function": device.set_function, "range": device.set_range, "resolution": device.set_resolution,
                   "trigger": lambda _: device.set_trigger_auto()}
         try:
             result = setter[name](value)
-            events.put(("notice", f"已确认：{name} = {getattr(result, 'token', result)}"))
+            if name == "range" and result == "AUTO":
+                events.put(("notice", "已发送：自动量程（固件无法读回自动/手动状态，下方显示的是当前所在量程）"))
+            else:
+                events.put(("notice", f"已确认：{name} = {getattr(result, 'token', result)}"))
         except (SettingError, RejectedError, ValueError) as exc:
+            # Recoverable only; transport/framing errors end the session through run().
             events.put(("notice", f"设置未生效：{exc}"))
-        read_status(device)
+        return read_status(device)
 
     def run(period):
         device = None
         try:
             device = open_device(args)
             events.put(("identity", device.identity))
-            read_status(device)
-            take = Sampler(device)
-            take.checked = True  # Checked below without ending the session.
-            live = False
+            need_status = not read_status(device)
+            take = Sampler(device, grace=math.inf)  # Stay connected and show "busy" instead.
             known = None
-            checked_at = 0.0
+            paused = False
             due = time.monotonic()
             while not stop.is_set():
                 try:
@@ -152,32 +156,29 @@ def gui(args):
                 if stop.is_set():
                     break
                 if request:
-                    apply(device, *request)
+                    need_status = not apply(device, *request)
                     take.rejected_since = None
-                    live = live and request[0] != "trigger"
                     due = time.monotonic()
                     continue
                 due = time.monotonic() + period
-                if time.monotonic() - checked_at > 30:
-                    live = False  # The trigger can also be changed on the panel.
-                if not live:
-                    try:
-                        device.check_live()
-                        live, checked_at = True, time.monotonic()
-                    except RejectedError:
-                        continue
-                    except InstrumentError as exc:
-                        events.put(("notice", f"暂停采样：{exc}"))
-                        due = time.monotonic() + 5
-                        continue
-                row = take()
+                try:
+                    row = take()  # Also checks the trigger after every reading.
+                except NotLiveError as exc:
+                    events.put(("notice", f"暂停采样：{exc}"))
+                    if not paused or need_status:
+                        need_status = not read_status(device)  # Enables the "back to auto" button.
+                    paused = True
+                    due = time.monotonic() + 2
+                    continue
+                if paused:
+                    paused, need_status = False, True  # Trigger is back to AUTO; refresh below.
                 if row is None:
-                    events.put(("busy", None))
+                    events.put(("busy", take.last_rejection))
                     continue
                 events.put(("sample", row))
-                if row[1] != known:
-                    if known is not None:
-                        read_status(device)  # Function changed on the panel.
+                if row[1] != known or need_status:
+                    if known is not None or need_status:
+                        need_status = not read_status(device)  # Function changed on the panel.
                     known = row[1]
         except Exception as exc:
             logging.exception("Acquisition failed")
@@ -230,9 +231,10 @@ def gui(args):
         state["function"] = function.token
         function_var.set(f"{function.token} {function.label}")
         range_box.config(values=(AUTO,) + function.ranges if function.ranges else ())
-        range_var.set(function.ranges[info["range"]] if info["range"] is not None else "")
+        rng, res = info["range"], info["resolution"]
+        range_var.set(function.ranges[rng] if rng is not None and 0 <= rng < len(function.ranges) else "")
         resolution_box.config(values=RESOLUTIONS if function.resolution else ())
-        resolution_var.set(RESOLUTIONS[info["resolution"]] if info["resolution"] is not None else "")
+        resolution_var.set(RESOLUTIONS[res] if res is not None and 0 <= res < len(RESOLUTIONS) else "")
         trigger, calculate = (info.get("trigger") or "—").upper(), (info.get("calculate") or "none").lower()
         detail.set(f"{function.label}  量程 {range_var.get() or '—'}  分辨率 {resolution_var.get() or '—'}  "
                    f"触发 {trigger} {info.get('interval') or ''}"
@@ -317,6 +319,8 @@ def gui(args):
             stats_text.set(f"统计 n={stats.n}  最小 {format_value(stats.min, unit)}  最大 {format_value(stats.max, unit)}  "
                            f"平均 {format_value(stats.mean, unit)}  σ {sigma}"
                            + (f"  过量程 {stats.overloads}" if stats.overloads else ""))
+        else:
+            stats_text.set(f"统计：无有效读数  过量程/开路 {stats.overloads}")
         lower, upper = limits()
         out = row[2] is None or (lower is not None and row[2] < lower) or (upper is not None and row[2] > upper)
         reading.set(format_value(row[2], unit) + ("  超限" if out and (lower, upper) != (None, None) else ""))
@@ -378,9 +382,14 @@ def gui(args):
                 set_controls("status" in state)
             elif kind == "notice":
                 status.set(data)
+                state["stale"] = data.startswith("暂停采样")
             elif kind == "busy":
-                status.set("仪器忙（回复 E，可能正在切换功能/量程），稍后重试…")
+                status.set(f"仪器忙或回复错位，重试中…（{data}）")
+                state["stale"] = True
             elif kind == "sample":
+                if state.get("stale"):
+                    status.set("采样中")
+                    state["stale"] = False
                 on_sample(data)
                 redraw = True
             elif kind == "error":

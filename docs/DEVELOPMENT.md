@@ -47,16 +47,16 @@ with DM3051.open(timeout_ms=3000) as meter:
 | `function()` | 当前功能（`Function` 元组） |
 | `measure(expected=None)` | 读功能→读数→再读功能；过量程 `value=None`；功能中途变化抛 `RejectedError` |
 | `measure_dcv()` | 0.1 版兼容接口：必须是 DCV 且不过量程，返回 `(float, raw)` |
-| `set_function(name)` / `set_range(i or "AUTO")` / `set_resolution(i)` | 设置并读回确认；必要时重发；失败抛 `SettingError`，参数越界抛 `ValueError` |
+| `set_function(name)` / `set_range(i or "AUTO")` / `set_resolution(i)` | 设置并读回确认（`AUTO` 只发送，无法读回）；读回为另一个确定值时重发，错位/忙回复不重发；失败抛 `SettingError`，参数越界抛 `ValueError` |
 | `range_index()` / `resolution()` | 读回索引，忙时短暂重试，不可用为 `None` |
 | `trigger_source()` / `set_trigger_auto()` / `check_live()` | 触发源检查；只提供切回 AUTO |
 | `status()` | 身份、功能、单位、量程、分辨率、触发、间隔、运算、命令集 |
 | `drain()` | 读空 IN 端点并返回丢弃的字节 |
 | `close()` | 幂等；尽力返回本地、释放接口、恢复内核驱动 |
 
-异常层次：`InstrumentError` ⊃ `RejectedError`（忙/拒绝，通常暂时）、`SettingError`（设置未生效或不支持，连接仍可用）。USB 传输错误为 PyUSB 的 `USBError`/`TimeoutError`，应视为连接失效。
+异常层次：`InstrumentError` ⊃ `RejectedError`（忙/拒绝/错位回复，通常暂时）、`SettingError`（设置未生效或不支持，连接仍可用）、`NotLiveError`（触发源非 AUTO）。其余 `InstrumentError`（短写、非法回复头、非 ASCII）表示事务边界可能已损坏，GUI 会结束会话。读数必须是固件的科学记数格式（`d.dddddde±dd`），裸整数等错位回复按 `RejectedError` 处理。USB 传输错误为 PyUSB 的 `USBError`/`TimeoutError`，应视为连接失效。
 
-`app.Sampler(device, expected=None, grace=10)` 包装一次采样：首次调用检查触发源；暂时的 `RejectedError` 返回 `None` 并在超出宽限期后才抛出，从不生成假数据。
+`app.Sampler(device, expected=None, grace=10)` 包装一次采样：每次读数后检查触发源（非 AUTO 抛 `NotLiveError`，本次读数丢弃）；暂时的 `RejectedError`（`E`、空回复、错位的回复）返回 `None`、原因存于 `last_rejection`，超出宽限期后才抛出，从不生成假数据。CLI 用 10 s 宽限；GUI 用无限宽限，持续显示“忙”而不断开。
 
 ## 功能与量程表
 
@@ -66,14 +66,14 @@ with DM3051.open(timeout_ms=3000) as meter:
 | 交流电压 | ACV | V | 200 mV, 2 V, 20 V, 200 V, 750 V | 有 | 否 | 已验证 |
 | 直流电流 | DCI | A | 2 mA, 20 mA, 200 mA, 1 A, 10 A | 有 | 否 | 已验证切换与读数 |
 | 交流电流 | ACI | A | 20 mA, 200 mA, 2 A, 10 A | 有 | 否 | 已验证切换与读数 |
-| 两线电阻 | 2WR | Ω | 200 Ω … 100 MΩ（7 档） | 有 | 是 | 未验证 |
-| 四线电阻 | 4WR | Ω | 同上 | 有 | 是 | 未验证 |
+| 两线电阻 | 2WR（固件 `RESISTANCE`） | Ω | 200 Ω, 2 kΩ, 20 kΩ, 200 kΩ, 1 MΩ, 10 MΩ | 有 | 是 | 已验证切换、量程读回、开路 OVLD（未接已知电阻） |
+| 四线电阻 | 4WR（固件 `FRESISTANCE`） | Ω | 同上 | 有 | 是 | 已验证切换、量程读回（未接已知电阻） |
 | 频率 | FREQUENCY | Hz | 不提供 | 无 | 否 | 已验证切换与读数 |
 | 周期 | PERIOD | s | 不提供 | 无 | 否 | 已验证切换与读数 |
-| 通断 | CONT | Ω | 不提供 | 无 | 是 | 未验证 |
-| 二极管 | DIODE | V | 不提供 | 无 | 是 | 未验证 |
-| 电容 | CAP | F | 2 nF … 200 µF（6 档） | 有 | 是 | 未验证 |
-| 电压比 | RATIO | — | 不提供 | 有 | 否 | 未验证 |
+| 通断 | CONT（固件 `CONTINUITY`） | Ω | 不提供 | 无 | 是 | 已验证切换、开路 OVLD |
+| 二极管 | DIODE | V | 不提供 | 无 | 是 | 已验证切换、开路 OVLD |
+| 电容 | CAP（固件 `CAPACITANCE`） | F | 2 nF … 200 µF（6 档） | 有 | 是 | 已验证切换、0–5 档读回、开路杂散电容读数 |
+| 电压比 | RATIO | — | 不提供 | 有 | 否 | 已验证切换与读数（输入悬空） |
 
 分辨率索引：0 = 4½，1 = 5½，2 = 6½。功能表是 `usb_device.FUNCTIONS`，新增或修正一项即可同时影响 CLI、GUI 和模拟器。把“未验证”改为“已验证”前，请按 TESTING 在真机上确认切换、读数、过量程和读回。
 

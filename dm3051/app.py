@@ -6,7 +6,7 @@ import logging
 import math
 import sys
 import time
-from .usb_device import DM3051, InstrumentError, RejectedError, list_devices, lookup_function
+from .usb_device import DM3051, InstrumentError, RESOLUTIONS, RejectedError, list_devices, lookup_function
 
 FIELDS = ("timestamp", "function", "value", "unit", "raw")
 REJECT_GRACE_S = 10.0  # transient E replies tolerated while the panel changes mode
@@ -69,19 +69,20 @@ def sample(device, expected=None):
 
 
 class Sampler:
-    """Retries transient E replies (mode change on the panel) for a bounded time, never inventing data."""
+    """Retries transient E replies (mode change on the panel) for a bounded time, never inventing data.
+    The trigger source is checked after every reading (raises NotLiveError), so a switch to
+    single trigger on the panel cannot turn held values into new rows."""
     def __init__(self, device, expected=None, grace=REJECT_GRACE_S):
         self.device, self.expected, self.grace = device, expected, grace
         self.rejected_since = None
-        self.checked = False
+        self.last_rejection = None
 
     def __call__(self):
-        if not self.checked:
-            self.device.check_live()
-            self.checked = True
         try:
             row = sample(self.device, self.expected)
-        except RejectedError:
+            self.device.check_live()
+        except RejectedError as exc:
+            self.last_rejection = exc
             now = time.monotonic()
             self.rejected_since = self.rejected_since or now
             if now - self.rejected_since > self.grace:
@@ -92,13 +93,26 @@ class Sampler:
 
 
 def configure(device, args):
-    """Explicit setters from the command line, each confirmed by readback."""
+    """Explicit setters from the command line, confirmed by readback (except AUTO range).
+    Everything that can be checked is checked before the first setter changes the instrument."""
+    if args.range is not None or args.resolution is not None:
+        target = lookup_function(args.function) if args.function else device.function()
+        if args.range is not None and str(args.range).upper() != "AUTO":
+            if not 0 <= int(args.range) < len(target.ranges):
+                raise ValueError(f"{target.token} has no range {args.range}"
+                                 + (f" (0..{len(target.ranges) - 1} or AUTO)" if target.ranges else ""))
+        elif args.range is not None and not target.ranges:
+            raise ValueError(f"{target.token} has no range control")
+        if args.resolution is not None and not (target.resolution and 0 <= args.resolution < len(RESOLUTIONS)):
+            raise ValueError(f"{target.token} has no resolution setting")
     if args.trigger:
         print(f"trigger -> {device.set_trigger_auto()}", file=sys.stderr)
     if args.function:
         print(f"function -> {device.set_function(args.function).token}", file=sys.stderr)
     if args.range is not None:
-        print(f"range -> {device.set_range(args.range)}", file=sys.stderr)
+        result = device.set_range(args.range)
+        print(f"range -> {result}" + (" (sent; the firmware cannot read back auto mode)" if result == "AUTO" else ""),
+              file=sys.stderr)
     if args.resolution is not None:
         print(f"resolution -> {device.set_resolution(args.resolution)}", file=sys.stderr)
 
@@ -144,14 +158,16 @@ def cli(args):
                     writer.writerow(row)
                     output.flush()
             else:
-                print("instrument busy (E), retrying…", file=sys.stderr)
+                print(f"instrument busy, retrying… ({take.last_rejection})", file=sys.stderr)
             time.sleep(max(0, args.interval - (time.monotonic() - started)))
         for st in stats.values():
             print(summary(st), file=sys.stderr)
     finally:
-        if output:
-            output.close()
-        device.close()
+        try:
+            if output:
+                output.close()
+        finally:
+            device.close()
 
 
 def main():
@@ -180,6 +196,8 @@ def main():
     args = parser.parse_args()
     if not math.isfinite(args.interval) or args.interval < 0.2 or args.count < 1 or not 100 <= args.timeout <= 30000:
         parser.error("interval >= 0.2, count >= 1, timeout 100..30000 required")
+    if args.demo and args.list:
+        parser.error("--list enumerates real USB devices; it cannot be combined with --demo")
     if args.function:
         try:
             lookup_function(args.function)
