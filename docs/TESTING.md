@@ -1,40 +1,40 @@
-# 测试与验收
+# Testing and acceptance
 
-## 单元测试（无硬件）
+## Unit tests (no hardware)
 
 ```sh
 python3 -m unittest discover -s tests -v
 ```
 
-41 项：
-- `test_protocol.py`：三个独立写入的精确字节、未填充 payload、原始分段续读、非法回复头、E 错误、命令边界、短写、setter 无读取。
-- `test_control.py`：空回复=忙、孤立 `R` 跳过、功能别名（FREQ/FREQUENCY、RESISTANCE 等全称）、过量程（9.9e37 与 -8.888e3）与不可解析读数、SI 格式化；功能切换期间的 E、丢弃 setter 的重发、`R` 不触发重发、量程/分辨率读回与越界、读回失败、读数期间功能变化、期望功能、过量程读数、触发检查、状态；电阻全称回复与 0–5 档、错位回复不致命；错位回复不触发重发；采样器宽限期、错位回复按忙处理、迟到的量程索引不当作读数、采集中切到单次触发、拒绝保持读数、统计；`open()` 的 EIO 复位重开/提示重启/其他错误不重试、孤立与连续 `R` 按忙处理、电容读数长截止时间；CLI demo 写 CSV 与拒绝覆盖、参数在任何设置前校验、CSV 关闭失败仍释放设备、`--demo --list` 被拒绝。
+41 tests:
+- `test_protocol.py`: exact bytes of the three separate writes, unpadded payload, raw segmented continuation reads, bad reply headers, `E` errors, command boundaries, short writes, setters that never read.
+- `test_control.py`: empty reply = busy; lone `R` skipped; function aliases (FREQ/FREQUENCY and long names such as RESISTANCE); overload (9.9e37 and -8.888e3) and unparseable readings; SI formatting; `E` while switching function; resending dropped setters; `R` never triggers a resend; range/resolution readback and bounds; readback failure; function change during a reading; expected function; overload readings; trigger check; status; long resistance name and ranges 0–5; misplaced replies are not fatal and do not trigger a resend; sampler grace period, misplaced replies treated as busy, a late range index not taken as a reading, switching to single trigger mid-run, refusing held readings; statistics; `open()` EIO recovery (reset and reopen / ask for a power cycle / no retry for other errors); lone and consecutive `R` treated as busy; long deadline for capacitance readings; CLI demo CSV output and refusal to overwrite; arguments checked before any setter runs; device released even when closing the CSV fails; `--demo --list` rejected.
 
-GUI 用 Xvfb 驱动按钮/下拉框做过模拟与真机自动化测试（0.2.1 另测模拟：连接时仪器忙后恢复、采集中切到单次触发并用按钮切回、自动量程提示、电阻/通断切换）（脚本未纳入仓库，因为依赖桌面截图工具）。
+The GUI was also tested automatically under Xvfb, driving buttons and combo boxes, both against the simulator and the real meter (0.2.1 additionally tested with the simulator: instrument busy at connect and then recovering, switching to single trigger mid-run and back with the button, the auto range notice, switching to resistance/continuity). Those scripts are not in the repository because they depend on desktop screenshot tools.
 
-## Linux 真机验收记录（2026-10-10）
+## Hardware acceptance on Linux (2026-10-10)
 
 ```text
-Arch Linux，内核 7.2.8-arch1-1
+Arch Linux, kernel 7.2.8-arch1-1
 Python 3.14 / PyUSB 1.3.1 / libusb 1.0.30 / Tk 8.6
-仪器：DM3051，固件 03.03.00.03.02.00，序列号 DM3H1035xxxxx
-USB：0400:09c4，接口 0 class FE/03/01，EP OUT 0x01 / IN 0x82，64 字节，无 USB 序列号
-权限：udev/70-dm3051.rules（uaccess），普通用户
+Instrument: DM3051, firmware 03.03.00.03.02.00, serial DM3H1035xxxxx
+USB: 0400:09c4, interface 0 class FE/03/01, EP OUT 0x01 / IN 0x82, 64 bytes, no USB serial number
+Permissions: udev/70-dm3051.rules (uaccess), regular user
 ```
 
-| # | 项目 | 结果 |
+| # | Item | Result |
 |---|---|---|
-| 1 | `--list` 恰好一台 | 通过 |
-| 2 | `*IDN?` | 通过：`RIGOL Technoligies,DM3051,DM3H1035xxxxx,03.03.00.03.02.00` |
-| 3 | 初次连接 bulk 全部 EIO | 观察到两次（均在仪器重新上电后）：第一次端口复位后恢复；第二次（2026-10-11）复位无效、重启仪器后恢复 → 自动“释放、复位、重开”一次，仍失败提示重启仪器 |
-| 4 | `:FUNCtion?` = DCV；CLI 10 点 CSV | 通过：表头 + 10 行，统计摘要正确 |
-| 5 | 被动功能切换 ACV/DCI/ACI/FREQ/PERI 并读数 | 通过（发现 FREQUENCY/PERIOD 令牌差异） |
-| 6 | DCV 手动量程 0–4 读回、自动量程、分辨率 1↔2 | 通过 |
-| 7 | 压力：ACV↔DCV 8 次 + 量程 3 次 + 分辨率，开发中多轮、最终代码 2 轮 | 通过；观察到 setter 被丢弃（重发后确认）和迟到的重复回复（被读空机制丢弃），之后 `*IDN?` 对齐 |
-| 8 | 单次触发下采样 | 正确拒绝；`--trigger AUTO` 恢复并读回确认 |
-| 9 | 两个进程同时访问 | 第二个得到 Resource busy，第一个不受影响；结束后可正常连接 |
-| 10 | GUI：连接、ACV→DCV、20 V 量程→自动、6½、上限提示、实时记录、停止、保存 | 通过：实时记录 37 行 = 导出 37 行，功能列正确 |
-| 11 | 关闭后内核驱动接管 | 通过：连续多次打开/关闭无残留 |
-| 12 | 插拔断线、过量程实测 | **未做**（无人在场插拔；无可安全施加的过量程信号） |
-| 13 | 2WR/4WR/CONT/DIODE/CAP/RATIO 真机切换（2026-10-11，表笔全部断开） | 通过：切换与读数；电阻/电容量程读回；发现全称功能名、`-8.888e3` 开路值、电阻无 100 MΩ 档（已修正）。最终代码的整轮复测中途停止，**未接已知电阻/电容/二极管测数值** |
-| 14 | 表笔短接复测（2026-10-11，0.2.2 代码） | 通过：2WR 约 1.53 Ω、CONT 约 1.5 Ω、DIODE 约 1.8 mV、CAP OVLD；2WR/4WR/CAP 各档读回；分辨率读回；CLI 2WR 6 点 CSV；GUI 真机 DCV→2WR→10 MΩ→CONT→DCV，实时记录 46 行 = 导出 46 行。期间发现并修正：RATIO 切换后回 `R` 导致超时断开、电容读数约 3.1 s 超过 3 s 截止时间、新连接身份查询拿到迟到的 `R`；修正后 RATIO 连续 3 轮切换、跨进程连续切换 8 次全部通过 |
+| 1 | `--list` finds exactly one device | Pass |
+| 2 | `*IDN?` | Pass: `RIGOL Technoligies,DM3051,DM3H1035xxxxx,03.03.00.03.02.00` |
+| 3 | Every bulk transfer fails with EIO on first connect | Seen twice, both after the meter was power-cycled: the first time a port reset fixed it; the second time (2026-10-11) the reset did not help and power-cycling the meter did → the code now releases, resets and reopens once automatically, and asks for a power cycle if that still fails |
+| 4 | `:FUNCtion?` = DCV; CLI 10-point CSV | Pass: header + 10 rows, correct summary |
+| 5 | Function changed on the panel to ACV/DCI/ACI/FREQ/PERI, with readings | Pass (found the FREQUENCY/PERIOD token difference) |
+| 6 | DCV manual ranges 0–4 read back, auto range, resolution 1↔2 | Pass |
+| 7 | Stress: ACV↔DCV 8 times + range 3 times + resolution; many rounds during development, 2 rounds on the final code | Pass; observed dropped setters (confirmed after resend) and late duplicate replies (discarded by the drain), with `*IDN?` in step afterwards |
+| 8 | Sampling with single trigger | Correctly refused; `--trigger AUTO` restores it, confirmed by readback |
+| 9 | Two processes at once | The second gets Resource busy and the first is unaffected; connecting works normally afterwards |
+| 10 | GUI: connect, ACV→DCV, 20 V range→auto, 6½, upper limit alarm, live record, stop, save | Pass: live record 37 rows = export 37 rows, function column correct |
+| 11 | Kernel driver takes over after close | Pass: repeated open/close leaves nothing behind |
+| 12 | Unplugging during a session, real overload signal | **Not done** (nobody present to unplug; no overload signal that could be applied safely) |
+| 13 | 2WR/4WR/CONT/DIODE/CAP/RATIO switching on the real meter (2026-10-11, all leads disconnected) | Pass: switching and readings; resistance/capacitance range readback. Found the long function names, the `-8.888e3` open value and the missing 100 MΩ resistance range (all fixed). The full rerun on the final code was stopped halfway; **no known resistor, capacitor or diode was measured** |
+| 14 | Retest with shorted leads (2026-10-11, 0.2.2 code) | Pass: 2WR about 1.53 Ω, CONT about 1.5 Ω, DIODE about 1.8 mV, CAP OVLD; every 2WR/4WR/CAP range read back; resolution readback; CLI 2WR 6-point CSV; GUI on the real meter DCV→2WR→10 MΩ→CONT→DCV, live record 46 rows = export 46 rows. Found and fixed along the way: RATIO answering `R` after switching caused a timeout and disconnect; capacitance readings (about 3.1 s) exceeded the 3 s deadline; a new connection's identity query received a late `R`. After the fixes, 3 rounds of RATIO switching and 8 consecutive cross-process switches all passed |

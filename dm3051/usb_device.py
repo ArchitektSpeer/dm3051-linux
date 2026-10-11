@@ -35,23 +35,23 @@ resolution: has :RESOlution:<path>; excites: drives a test current through the i
 verified: switch and reading checked on Linux hardware (firmware 03.03.00.03.02.00)."""
 
 FUNCTIONS = (
-    Function("DCV", "直流电压", "V", "VOLTage:DC", ("200 mV", "2 V", "20 V", "200 V", "1000 V"), True, False, True),
-    Function("ACV", "交流电压", "V", "VOLTage:AC", ("200 mV", "2 V", "20 V", "200 V", "750 V"), True, False, True),
-    Function("DCI", "直流电流", "A", "CURRent:DC", ("2 mA", "20 mA", "200 mA", "1 A", "10 A"), True, False, True),
-    Function("ACI", "交流电流", "A", "CURRent:AC", ("20 mA", "200 mA", "2 A", "10 A"), True, False, True),
+    Function("DCV", "DC voltage", "V", "VOLTage:DC", ("200 mV", "2 V", "20 V", "200 V", "1000 V"), True, False, True),
+    Function("ACV", "AC voltage", "V", "VOLTage:AC", ("200 mV", "2 V", "20 V", "200 V", "750 V"), True, False, True),
+    Function("DCI", "DC current", "A", "CURRent:DC", ("2 mA", "20 mA", "200 mA", "1 A", "10 A"), True, False, True),
+    Function("ACI", "AC current", "A", "CURRent:AC", ("20 mA", "200 mA", "2 A", "10 A"), True, False, True),
     # The manual lists a 100 MΩ range (6); firmware 03.03 clamps 6 to 5.
-    Function("2WR", "两线电阻", "Ω", "RESistance",
+    Function("2WR", "2-wire resistance", "Ω", "RESistance",
              ("200 Ω", "2 kΩ", "20 kΩ", "200 kΩ", "1 MΩ", "10 MΩ"), True, True, True),
-    Function("4WR", "四线电阻", "Ω", "FRESistance",
+    Function("4WR", "4-wire resistance", "Ω", "FRESistance",
              ("200 Ω", "2 kΩ", "20 kΩ", "200 kΩ", "1 MΩ", "10 MΩ"), True, True, True),
     # The manual says FREQ/PERI; firmware 03.03 answers FREQUENCY/PERIOD. Their RANGe? replies are not ranges.
-    Function("FREQUENCY", "频率", "Hz", "FREQuency", (), False, False, True),
-    Function("PERIOD", "周期", "s", "PERiod", (), False, False, True),
-    Function("CONT", "通断", "Ω", "CONTinuity", (), False, True, True),
-    Function("DIODE", "二极管", "V", "DIODe", (), False, True, True),
-    Function("CAP", "电容", "F", "CAPacitance",
+    Function("FREQUENCY", "Frequency", "Hz", "FREQuency", (), False, False, True),
+    Function("PERIOD", "Period", "s", "PERiod", (), False, False, True),
+    Function("CONT", "Continuity", "Ω", "CONTinuity", (), False, True, True),
+    Function("DIODE", "Diode", "V", "DIODe", (), False, True, True),
+    Function("CAP", "Capacitance", "F", "CAPacitance",
              ("2 nF", "20 nF", "200 nF", "2 µF", "20 µF", "200 µF"), True, True, True),
-    Function("RATIO", "直流电压比", "", "VOLTage:DC:RATIo", (), True, False, True),
+    Function("RATIO", "DC voltage ratio", "", "VOLTage:DC:RATIo", (), True, False, True),
 )
 # Manual names, and the long :FUNCtion? replies of firmware 03.03.
 _ALIASES = {"FREQ": "FREQUENCY", "PERI": "PERIOD", "RESISTANCE": "2WR", "FRESISTANCE": "4WR",

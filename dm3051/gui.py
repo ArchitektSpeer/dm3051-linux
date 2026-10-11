@@ -9,14 +9,14 @@ import time
 from .app import FIELDS, Sampler, Stats, format_value, open_device
 from .usb_device import FUNCTIONS, RESOLUTIONS, NotLiveError, RejectedError, SettingError, lookup_function
 
-AUTO = "自动"
+AUTO = "Auto"
 
 
 def gui(args):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox
     root = tk.Tk()
-    root.title("DM3051 Linux — " + ("模拟仪器" if args.demo else "USB"))
+    root.title("DM3051 Linux — " + ("simulated instrument" if args.demo else "USB"))
     root.geometry("860x620")
     events = queue.Queue()
     requests = queue.Queue()
@@ -25,12 +25,12 @@ def gui(args):
     worker = None
     closing = False
     state = {"function": None, "pending": False, "stats": Stats(), "record": None, "recorded": 0}
-    status = tk.StringVar(value="点击开始 / 连接；面板当前功能会被自动识别")
+    status = tk.StringVar(value="Press Start / Connect; the function selected on the panel is detected automatically")
     reading = tk.StringVar(value="—")
     detail = tk.StringVar(value="")
     interval = tk.StringVar(value=str(args.interval))
     function_var, range_var, resolution_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
-    stats_text, record_text = tk.StringVar(value="统计：—"), tk.StringVar(value="未记录")
+    stats_text, record_text = tk.StringVar(value="Statistics: —"), tk.StringVar(value="Not recording")
     lower_var, upper_var = tk.StringVar(), tk.StringVar()
     function_names = [f"{f.token} {f.label}" for f in FUNCTIONS]
 
@@ -42,31 +42,33 @@ def gui(args):
     ttk.Label(top, textvariable=status, wraplength=820).pack(anchor="w", pady=8)
     bar = ttk.Frame(top)
     bar.pack(fill="x")
-    ttk.Label(bar, text="采样间隔（秒）").pack(side="left")
+    ttk.Label(bar, text="Interval (s)").pack(side="left")
     entry = ttk.Entry(bar, textvariable=interval, width=8)
     entry.pack(side="left", padx=8)
     controls = ttk.Frame(top)
     controls.pack(fill="x", pady=(8, 0))
-    ttk.Label(controls, text="功能").pack(side="left")
-    function_box = ttk.Combobox(controls, textvariable=function_var, values=function_names, width=14, state="disabled")
+    ttk.Label(controls, text="Function").pack(side="left")
+    function_box = ttk.Combobox(controls, textvariable=function_var, values=function_names, width=24, state="disabled")
     function_box.pack(side="left", padx=(4, 12))
-    ttk.Label(controls, text="量程").pack(side="left")
+    ttk.Label(controls, text="Range").pack(side="left")
     range_box = ttk.Combobox(controls, textvariable=range_var, width=10, state="disabled")
     range_box.pack(side="left", padx=(4, 12))
-    ttk.Label(controls, text="分辨率").pack(side="left")
+    ttk.Label(controls, text="Resolution").pack(side="left")
     resolution_box = ttk.Combobox(controls, textvariable=resolution_var, values=RESOLUTIONS, width=6, state="disabled")
     resolution_box.pack(side="left", padx=(4, 12))
     extra = ttk.Frame(top)
     extra.pack(fill="x", pady=(8, 0))
-    ttk.Label(extra, text="下限").pack(side="left")
+    ttk.Label(extra, text="Lower limit").pack(side="left")
     ttk.Entry(extra, textvariable=lower_var, width=10).pack(side="left", padx=(4, 8))
-    ttk.Label(extra, text="上限").pack(side="left")
+    ttk.Label(extra, text="Upper limit").pack(side="left")
     ttk.Entry(extra, textvariable=upper_var, width=10).pack(side="left", padx=(4, 4))
-    ttk.Label(extra, text="（基本单位，如 0.005 或 5e-3；留空不检查）").pack(side="left", padx=(0, 12))
+    ttk.Label(extra, text="(base units, e.g. 5e-3)").pack(side="left", padx=(0, 12))
     ttk.Label(top, textvariable=stats_text).pack(anchor="w", pady=(8, 0))
+    ttk.Label(root, text="The plot shows the last 300 points of the current function; memory keeps the last 10000 rows, "
+              "use Live record for long runs. Settings are confirmed by readback (except auto range).",
+              wraplength=820).pack(side="bottom", pady=8)
     canvas = tk.Canvas(root, background="#101820", highlightthickness=0)
     canvas.pack(fill="both", expand=True, padx=12, pady=8)
-    ttk.Label(root, text="曲线显示当前功能的最近 300 点；内存保留最近 10000 条，长时间采集请用“实时记录”。设置均经仪器读回确认（自动量程除外）。").pack(pady=8)
 
     def limits():
         """Parsed (lower, upper); an unparsable field is ignored and shown as such."""
@@ -90,7 +92,7 @@ def gui(args):
         recent.reverse()
         values = [r[2] for r in recent if r[2] is not None]
         if not values:
-            canvas.create_text(w / 2, h / 2, text="过量程" if recent else "等待采样", fill="white")
+            canvas.create_text(w / 2, h / 2, text="Overload" if recent else "Waiting for samples", fill="white")
             return
         unit = recent[-1][3]
         lo, hi = min(values), max(values)
@@ -130,12 +132,12 @@ def gui(args):
         try:
             result = setter[name](value)
             if name == "range" and result == "AUTO":
-                events.put(("notice", "已发送：自动量程（固件无法读回自动/手动状态，下方显示的是当前所在量程）"))
+                events.put(("notice", "Sent: auto range (the firmware cannot read back auto/manual; the range shown below is the one currently in use)"))
             else:
-                events.put(("notice", f"已确认：{name} = {getattr(result, 'token', result)}"))
+                events.put(("notice", f"Confirmed: {name} = {getattr(result, 'token', result)}"))
         except (SettingError, RejectedError, ValueError) as exc:
             # Recoverable only; transport/framing errors end the session through run().
-            events.put(("notice", f"设置未生效：{exc}"))
+            events.put(("notice", f"Setting not applied: {exc}"))
         return read_status(device)
 
     def run(period):
@@ -164,7 +166,7 @@ def gui(args):
                 try:
                     row = take()  # Also checks the trigger after every reading.
                 except NotLiveError as exc:
-                    events.put(("notice", f"暂停采样：{exc}"))
+                    events.put(("notice", f"Sampling paused: {exc}"))
                     if not paused or need_status:
                         need_status = not read_status(device)  # Enables the "back to auto" button.
                     paused = True
@@ -200,7 +202,7 @@ def gui(args):
             return
         state["pending"] = True
         set_controls(False)
-        status.set(f"正在设置 {name}…")
+        status.set(f"Setting {name}…")
         requests.put((name, value))
 
     def on_function(_):
@@ -208,7 +210,7 @@ def gui(args):
         if function.token == state["function"]:
             return
         if function.excites and not messagebox.askyesno(
-                "确认", f"{function.label} 会从输入端输出测试电流。\n确认被测电路已断电并允许继续？"):
+                "Confirm", f"{function.label} drives a test current out of the input terminals.\nIs the circuit under test unpowered, and do you want to continue?"):
             show_status(state["status"])
             return
         request("function", function.token)
@@ -236,9 +238,9 @@ def gui(args):
         resolution_box.config(values=RESOLUTIONS if function.resolution else ())
         resolution_var.set(RESOLUTIONS[res] if res is not None and 0 <= res < len(RESOLUTIONS) else "")
         trigger, calculate = (info.get("trigger") or "—").upper(), (info.get("calculate") or "none").lower()
-        detail.set(f"{function.label}  量程 {range_var.get() or '—'}  分辨率 {resolution_var.get() or '—'}  "
-                   f"触发 {trigger} {info.get('interval') or ''}"
-                   + ("" if calculate == "none" else f"  ⚠ 仪器运算 {calculate}：读数可能已经过处理"))
+        detail.set(f"{function.label}  range {range_var.get() or '—'}  resolution {resolution_var.get() or '—'}  "
+                   f"trigger {trigger} {info.get('interval') or ''}"
+                   + ("" if calculate == "none" else f"  ⚠ instrument math {calculate}: readings may be processed"))
         trigger_button.config(state="normal" if trigger not in ("AUTO", "—") else "disabled")
         set_controls(True)
 
@@ -251,9 +253,9 @@ def gui(args):
             if not math.isfinite(period) or period < 0.2:
                 raise ValueError()
         except ValueError:
-            messagebox.showerror("采样间隔", "请输入不小于 0.2 的秒数")
+            messagebox.showerror("Interval", "Enter a number of seconds, at least 0.2")
             return
-        if rows and not messagebox.askyesno("重新开始", f"将清除已缓存的 {len(rows)} 条记录，继续？"):
+        if rows and not messagebox.askyesno("Restart", f"This clears the {len(rows)} buffered rows. Continue?"):
             return
         rows.clear()
         reset_stats(None)
@@ -265,18 +267,18 @@ def gui(args):
         start_button.config(state="disabled")
         entry.config(state="disabled")
         stop_button.config(state="normal")
-        status.set("正在连接…" + ("（模拟）" if args.demo else ""))
+        status.set("Connecting…" + (" (simulated)" if args.demo else ""))
         worker = threading.Thread(target=run, args=(period,), daemon=True)
         worker.start()
 
     def halt():
         stop.set()
         requests.put(None)
-        status.set("正在停止，等待当前 USB 操作结束…")
+        status.set("Stopping, waiting for the current USB transaction…")
 
     def export():
         if not rows:
-            messagebox.showinfo("保存 CSV", "还没有采样数据")
+            messagebox.showinfo("Save CSV", "No samples yet")
             return
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
         if path:
@@ -285,26 +287,26 @@ def gui(args):
                     writer = csv.writer(f)
                     writer.writerow(FIELDS)
                     writer.writerows(list(rows))
-                messagebox.showinfo("保存 CSV", f"已保存 {len(rows)} 条记录")
+                messagebox.showinfo("Save CSV", f"Saved {len(rows)} rows")
             except OSError as exc:
-                messagebox.showerror("保存失败", str(exc))
+                messagebox.showerror("Save failed", str(exc))
 
-    start_button = ttk.Button(bar, text="开始 / 连接", command=start)
+    start_button = ttk.Button(bar, text="Start / Connect", command=start)
     start_button.pack(side="left", padx=4)
-    stop_button = ttk.Button(bar, text="停止 / 断开", command=halt, state="disabled")
+    stop_button = ttk.Button(bar, text="Stop / Disconnect", command=halt, state="disabled")
     stop_button.pack(side="left", padx=4)
-    ttk.Button(bar, text="保存 CSV", command=export).pack(side="left", padx=4)
-    record_button = ttk.Button(bar, text="实时记录…", command=lambda: stop_recording() if state["record"] else start_recording())
+    ttk.Button(bar, text="Save CSV", command=export).pack(side="left", padx=4)
+    record_button = ttk.Button(bar, text="Live record…", command=lambda: stop_recording() if state["record"] else start_recording())
     record_button.pack(side="left", padx=4)
     ttk.Label(bar, textvariable=record_text).pack(side="left", padx=4)
-    ttk.Button(extra, text="清零统计", command=lambda: reset_stats(state["function"])).pack(side="left")
-    trigger_button = ttk.Button(extra, text="切回自动触发", command=lambda: request("trigger", "AUTO"), state="disabled")
+    ttk.Button(extra, text="Reset statistics", command=lambda: reset_stats(state["function"])).pack(side="left")
+    trigger_button = ttk.Button(extra, text="Auto trigger", command=lambda: request("trigger", "AUTO"), state="disabled")
     trigger_button.pack(side="left", padx=8)
 
     def reset_stats(function):
         unit = lookup_function(function).unit if function else ""
         state["stats"] = Stats(function, unit)
-        stats_text.set("统计：—")
+        stats_text.set("Statistics: —")
 
     def on_sample(row):
         rows.append(row)
@@ -316,28 +318,28 @@ def gui(args):
         unit = row[3]
         if stats.n:
             sigma = format_value(stats.stdev, unit) if stats.stdev is not None else "—"
-            stats_text.set(f"统计 n={stats.n}  最小 {format_value(stats.min, unit)}  最大 {format_value(stats.max, unit)}  "
-                           f"平均 {format_value(stats.mean, unit)}  σ {sigma}"
-                           + (f"  过量程 {stats.overloads}" if stats.overloads else ""))
+            stats_text.set(f"Statistics n={stats.n}  min {format_value(stats.min, unit)}  max {format_value(stats.max, unit)}  "
+                           f"mean {format_value(stats.mean, unit)}  σ {sigma}"
+                           + (f"  overload {stats.overloads}" if stats.overloads else ""))
         else:
-            stats_text.set(f"统计：无有效读数  过量程/开路 {stats.overloads}")
+            stats_text.set(f"Statistics: no valid readings  overload/open {stats.overloads}")
         lower, upper = limits()
         out = row[2] is None or (lower is not None and row[2] < lower) or (upper is not None and row[2] > upper)
-        reading.set(format_value(row[2], unit) + ("  超限" if out and (lower, upper) != (None, None) else ""))
+        reading.set(format_value(row[2], unit) + ("  OUT OF LIMITS" if out and (lower, upper) != (None, None) else ""))
         reading_label.config(foreground="#d03030" if out and (lower, upper) != (None, None) else "")
         if state["record"]:
             try:
                 state["record"][1].writerow(row)
                 state["record"][0].flush()
                 state["recorded"] += 1
-                record_text.set(f"记录中：{state['recorded']} 条")
+                record_text.set(f"Recording: {state['recorded']} rows")
             except OSError as exc:
                 stop_recording()
-                messagebox.showerror("实时记录失败", str(exc))
+                messagebox.showerror("Live record failed", str(exc))
 
     def start_recording():
         path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")],
-                                            title="实时记录到 CSV（每条立即写盘）")
+                                            title="Live record to CSV (every row is flushed to disk)")
         if not path:
             return
         try:
@@ -346,11 +348,11 @@ def gui(args):
             writer.writerow(FIELDS)
             f.flush()
         except OSError as exc:
-            messagebox.showerror("实时记录失败", str(exc))
+            messagebox.showerror("Live record failed", str(exc))
             return
         state["record"], state["recorded"] = (f, writer, path), 0
-        record_button.config(text="停止记录")
-        record_text.set("记录中：0 条")
+        record_button.config(text="Stop recording")
+        record_text.set("Recording: 0 rows")
 
     def stop_recording():
         if not state["record"]:
@@ -361,8 +363,8 @@ def gui(args):
             f.close()
         except OSError:
             pass
-        record_button.config(text="实时记录…")
-        record_text.set(f"已记录 {state['recorded']} 条 → {path}")
+        record_button.config(text="Live record…")
+        record_text.set(f"Recorded {state['recorded']} rows → {path}")
     canvas.bind("<Configure>", draw)
 
     def drain():
@@ -382,18 +384,18 @@ def gui(args):
                 set_controls("status" in state)
             elif kind == "notice":
                 status.set(data)
-                state["stale"] = data.startswith("暂停采样")
+                state["stale"] = data.startswith("Sampling paused")
             elif kind == "busy":
-                status.set(f"仪器忙或回复错位，重试中…（{data}）")
+                status.set(f"Instrument busy or reply out of step, retrying… ({data})")
                 state["stale"] = True
             elif kind == "sample":
                 if state.get("stale"):
-                    status.set("采样中")
+                    status.set("Sampling")
                     state["stale"] = False
                 on_sample(data)
                 redraw = True
             elif kind == "error":
-                status.set("错误：" + data)
+                status.set("Error: " + data)
             elif kind == "done":
                 start_button.config(state="normal")
                 entry.config(state="normal")
@@ -402,7 +404,7 @@ def gui(args):
                 trigger_button.config(state="disabled")
                 stop_recording()
                 if stop.is_set():
-                    status.set(f"已停止；缓存 {len(rows)} 条")
+                    status.set(f"Stopped; {len(rows)} rows buffered")
         if redraw:
             draw()
         if closing and (not worker or not worker.is_alive()):

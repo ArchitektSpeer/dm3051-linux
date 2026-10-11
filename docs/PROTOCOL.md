@@ -1,84 +1,84 @@
-# DM3051 旧 USB 协议
+# DM3051 legacy USB protocol
 
-## 为什么不直接使用标准 VISA/usbtmc
+## Why not plain VISA/usbtmc
 
-本次实机具有 USBTMC 接口描述符，但标准组合报文写入后读取超时。原厂旧 DLL 的行为是把头和未填充的 SCPI 数据作为独立 bulk 写入，之后发送特有读取请求。Windows 上照此实现后成功取得身份、当前功能和 DCV 数值。Linux（libusb 1.0.30）下同样的传输边界已经真机验证可用。
+The test instrument has a USBTMC interface descriptor, but writing a standard combined message and then reading times out. The vendor's old DLL instead sends the header and the unpadded SCPI payload as separate bulk writes, followed by its own read request. Implementing that on Windows returned the identity, the current function and a DCV reading. The same transfer boundaries have since been verified on Linux (libusb 1.0.30) with the real instrument.
 
-不要把这里的实现改成标准 USBTMC 然后假定等效。Linux `/dev/usbtmcN` 的内核包装会改变传输组织，因此本项目使用 libusb 直接访问端点。
+Do not swap this implementation for standard USBTMC and assume it is equivalent. The Linux `/dev/usbtmcN` kernel wrapper changes how transfers are organised, so this project talks to the endpoints directly through libusb.
 
-## 发现和连接
+## Discovery and connection
 
-实际硬件 VID=0400 PID=09c4；面板曾显示 1ab1:09c4，所以两者作为发现候选。唯一匹配后读取当前 configuration，从 class FE/subclass 03/alternate 0 的接口发现恰好一对 bulk OUT/IN。实机端点 OUT=01、IN=82，最大包长 64，接口 protocol=01，没有 USB 序列号。
+The real hardware enumerates as VID=0400 PID=09c4; the panel once showed 1ab1:09c4, so both are discovery candidates. With exactly one match, the active configuration is read and exactly one bulk OUT/IN pair is taken from the interface with class FE / subclass 03 / alternate 0. On the test instrument the endpoints are OUT=01 and IN=82, max packet size 64, interface protocol 01, and there is no USB serial number.
 
-只在没有活动 configuration 时尝试 set_configuration，不在正常连接中重新设置配置。发现多个候选就拒绝连接，需用户指定 bus/address。临时 detach 仅用于目标接口，claim 失败或身份不符时释放资源并尝试 reattach；USB 身份用 `*IDN?` 校验，型号必须 DM3051。
+`set_configuration` is only attempted when there is no active configuration; a normal connection never re-sets it. Several candidates means the connection is refused until the user picks a bus/address. The kernel driver is detached from the target interface only. If the claim fails or the identity does not match, resources are released and reattach is attempted. Identity is checked with `*IDN?`, and the model must be DM3051.
 
-## 一次查询的三个写入
+## The three writes of one query
 
-以 `*IDN?` 为例，SCPI 结尾为 LF，长度 6：
+For `*IDN?` (terminated by LF, length 6):
 
 ```text
-bulk OUT #1（12 字节）: 01 01 FE 00 06 00 00 00 01 00 00 00
-bulk OUT #2（6 字节） : 2A 49 44 4E 3F 0A
-bulk OUT #3（12 字节）: 02 02 FD 00 40 00 00 00 01 0A 00 00
-bulk IN #1           : 最多读取 64 字节
+bulk OUT #1 (12 bytes): 01 01 FE 00 06 00 00 00 01 00 00 00
+bulk OUT #2 (6 bytes) : 2A 49 44 4E 3F 0A
+bulk OUT #3 (12 bytes): 02 02 FD 00 40 00 00 00 01 0A 00 00
+bulk IN #1            : read up to 64 bytes
 ```
 
-头结构，小端序，12 字节：
+Header layout, little endian, 12 bytes:
 
-| 偏移 | 长度 | 含义与实现 |
+| Offset | Size | Meaning |
 |---|---|---|
-| 0 | 1 | 消息号：1 命令，2 读取请求/回复 |
-| 1 | 1 | tag：发送命令固定 1，读取固定 2；沿用已验证实现 |
-| 2 | 1 | tag 按位取反 |
-| 3 | 1 | 保留，0 |
-| 4 | 4 | 命令字节数；读取请求为 64；回复为实际 payload 长度 |
-| 8 | 1 | 实机旧 DLL 使用 1；不同于通常标准 USBTMC 的 term-char 位值 |
-| 9 | 1 | 命令头为 0，读取请求为 LF=10 |
-| 10 | 2 | 保留，0 |
+| 0 | 1 | Message ID: 1 command, 2 read request / reply |
+| 1 | 1 | Tag: always 1 for commands, 2 for reads, as in the verified implementation |
+| 2 | 1 | Bitwise inverse of the tag |
+| 3 | 1 | Reserved, 0 |
+| 4 | 4 | Command byte count; 64 for a read request; the payload length in a reply |
+| 8 | 1 | 1, as used by the vendor DLL; not the term-char bit value of standard USBTMC |
+| 9 | 1 | 0 in a command header, LF=10 in a read request |
+| 10 | 2 | Reserved, 0 |
 
-命令 payload **不补齐至四字节**，必须单独写。回复最初 12 字节是头，后面是 payload。如果头给出的长度超过第一包带来的 payload，继续读取原始 payload；后续分段没有新的头。最终多余对齐字节忽略，正文按 ASCII 解码并去首尾空白。
+The command payload is **not padded to four bytes** and must be written on its own. The first 12 bytes of a reply are a header, followed by the payload. If the header announces more payload than the first packet carried, the rest is read as raw payload; later segments have no header of their own. Trailing alignment bytes are ignored, and the text is decoded as ASCII and stripped.
 
-限制：回复长度 0..4096，必须消息 2、tag 2、反码 FD；短头、错误长度、空分段、短写入均抛异常。长度 0 与字符串 `E` 都按“拒绝/忙”（`RejectedError`）处理，不能当读数。每条事务的所有 USB 操作共用一个截止时间，防止分段读取无限等待。
+Limits: reply length 0..4096, and the header must be message 2, tag 2, inverse FD. Short headers, bad lengths, empty segments and short writes raise exceptions. A zero-length reply and the string `E` are both treated as "rejected/busy" (`RejectedError`) and never as a reading. All USB operations of one transaction share a single deadline, so segmented reads cannot wait forever.
 
-## 设置与状态
+## Settings and status
 
-`send_command()` 只发送头 + LF 结尾 payload，不发读取请求。后续用相关 query 验证设置实际生效，别对没有回复的命令调用 query。复合命令、换行、NUL 被拒绝，以免破坏查询/回复对应关系。
+`send_command()` sends only the header and an LF-terminated payload, with no read request. Whether a setting took effect is checked afterwards with a related query; never call query for a command that has no reply. Compound commands, newlines and NUL are rejected so the query/reply pairing cannot break.
 
-本次 Windows 实机验证过 `IDNSET RIGOL`、`CMDSET RIGOL` 的传输，但 Linux GUI 不自动改变仪器命令集。默认 RIGOL 命令模式下 `READ?`、`*OPT?`、`:SYSTem:ERRor?`、`:SYSTem:VERSion?` 回复 `E`。被拒绝的 setter 没有任何回复，也不会留下待读数据；因为没有可用的错误队列，设置是否生效只能靠读回判断。
+On Windows the transport of `IDNSET RIGOL` and `CMDSET RIGOL` was verified, but the Linux software never changes the instrument's command set on its own. In the default RIGOL command set, `READ?`, `*OPT?`, `:SYSTem:ERRor?` and `:SYSTem:VERSion?` answer `E`. A rejected setter produces no reply at all and leaves nothing to read; since there is no usable error queue, readback is the only way to tell whether a setting took effect.
 
-关闭时尽力发送 class/interface IN 控制请求 A1/A1（bmRequestType=0xA1、bRequest=161）、value=0、index=接口号、长度=1，即 GO_TO_LOCAL。其成功响应不保证面板解除远程；必要时按 Single。随后 release、reattach、dispose。内核权限问题不能靠发送校准口令解决。
+On close, a best-effort class/interface IN control request A1/A1 is sent (bmRequestType=0xA1, bRequest=161, value=0, index=interface number, length=1), i.e. GO_TO_LOCAL. Success does not guarantee that the panel leaves remote mode; press Single if needed. Then the interface is released, the kernel driver reattached, and resources disposed. Kernel permission problems cannot be fixed by sending a calibration password.
 
-## 日志和时序
+## Logging and timing
 
-`--trace` 逐条记录 OUT/IN 十六进制。不要同时从两个线程或进程访问同一设备；第二个进程 claim 接口会得到 `Resource busy`，不会干扰第一个。遇到 USB 超时不自动重试设置，停止采集并关闭连接。
+`--trace` logs every OUT/IN packet in hex. Never access the same device from two threads or processes at once; a second process that tries to claim the interface gets `Resource busy` and does not disturb the first. On a USB timeout, settings are not retried automatically; sampling stops and the connection is closed.
 
-## Linux 真机观察到的固件行为（03.03.00.03.02.00）
+## Firmware behaviour observed on Linux (03.03.00.03.02.00)
 
-以下均在 Arch Linux 真机上复现过，代码中有对应处理，单元测试和模拟器覆盖：
+All of these were reproduced on the real instrument under Arch Linux. Each has handling in the code and is covered by unit tests and the simulator:
 
-| 现象 | 处理 |
+| Behaviour | Handling |
 |---|---|
-| 仪器重新上电/插拔后，控制传输正常但**所有 bulk 传输 EIO**。一次端口复位后恢复（设置不变）；另一次复位与 INITIATE_CLEAR 都无效，只有重启仪器才恢复 | `open()` 遇 EIO 时释放接口、复位、等 2 秒、重新打开一次；仍失败则提示重启仪器 |
-| 读数查询要等测量完成才回复：电容短接时约 3.1 s/次 | 电容读数单独用 10 s 截止时间 |
-| 刚切到 RATIO 时读数查询直接回 `R`（未就绪），后面没有其他回复 | 非量程查询收到 `R` 后最多再等 1 s：有回复即是我们的答案（`R` 为迟到的旧回复），否则按忙处理；连续两个 `R` 也按忙处理 |
-| 上一个进程退出后仍可能有迟到的回复（如 `R`）在读空之后才到达，新连接的 `*IDN?` 会拿到它 | 身份查询最多重试 3 次，每次之间再读空 |
-| 通断功能的自动触发间隔读出为 `30ms`，其他功能为 `400ms` | 仅显示 |
-| 上一个客户端中断后，IN 端点里留有未读回复；新会话的第一条查询会读到它 | `open()` 先以 100 ms 超时读空 IN 端点并记录丢弃的字节 |
-| 偶尔一条回复会重复/迟到一条查询（数百次功能切换中出现数次），导致答非所问 | 每条查询前以 1 ms 超时读空 IN 端点（约 1 ms 代价）；非 `RANGe?` 查询收到孤立 `R` 时跳过并读下一帧 |
-| 功能/量程切换后约 0.1–2 s 内查询回复 `E` | 设置后轮询读回；采样时 `E` 视为忙，最多容忍 10 s 后报错 |
-| `RANGe?` 即使在稳态也约每三次回复一次 `R`（忙） | 读量程时短暂重试；`R` 不触发重发 setter |
-| setter 偶尔被静默丢弃（读回仍为旧值） | 读回出现**确定的其他值**时每 1 s 重发（这些 setter 是幂等的绝对值） |
-| 任何 `:MEASure:<x>?` 都返回当前显示的读数，与 `<x>` 是否为当前功能无关，**也不会切换功能** | 单位只依据 `:FUNCtion?`；读数前后各读一次功能，变化则丢弃该点 |
-| `:FUNCtion?` 对频率/周期返回 `FREQUENCY`/`PERIOD`，手册写的是 `FREQ`/`PERI` | 两种写法都接受 |
-| `:FUNCtion?` 对电阻/四线电阻/通断/电容返回全称 `RESISTANCE`/`FRESISTANCE`/`CONTINUITY`/`CAPACITANCE` | 映射为简称 2WR/4WR/CONT/CAP（CSV 中使用简称） |
-| 电阻、通断、二极管开路时读数为 `-8.888000e+03`（面板 -8.888 显示，手册二极管示例即此值），不是 `9.9e37` | 与 `9.9e37` 一样视为过量程/开路，value 为空 |
-| 电阻量程手册列到 6（100 MΩ），固件把 6 截到 5（10 MΩ）；自动量程开路时停在 5 | 只提供 0–5 |
-| `:FUNCtion?` 或 `:MEASure:*?` 偶尔得到另一条查询迟到的回复（如 `1`、`DCV`） | 读数必须是科学记数（`d.dddddde±dd`，所有真机读数都是此格式），功能必须是已知名称；否则视同 `E`（忙）重试、不重发设置、不中断会话。格式检查无法排除恰好也是科学记数的错位读数，但量程/分辨率/功能等回复都不会通过 |
-| 频率/周期的 `RANGe?` 回复的不是量程索引；`DIGIt?` 返回值与手册不符 | 这些功能不提供量程控制；不使用 `DIGIt` |
-| `:MEASure AUTO` 无法读回“自动/手动”状态，只能读到自动选出的量程 | GUI/CLI 如实显示当前量程，不声称“已确认自动” |
-| 单次触发（`:TRIGger:SOURce SINGle`）下 `:MEASure?` 一直返回保持的旧值；远程 `:TRIGger:SINGle:TRIGger` 之后 `:MEASure?` 持续返回长度 0 的回复，直到切回自动 | 采样前检查触发源，非 AUTO 拒绝采样；只提供“切回自动触发” |
-| `:DATAlog:CONFigure:*?` 有回复，但 `:DATAlog:RUN?`、`:DATAlog:DATA?` 被拒绝（手册注明 DATAlog 仅 DM3054/DM3064） | 不实现仪器端记录 |
-| `:CALCulate:FUNCtion?` 可用，各 `:CALCulate:*:STATe?` 被拒绝 | 状态中显示运算功能，非 `none` 时 GUI 提示读数可能已被处理 |
-| 身份字符串厂商名拼写为 `RIGOL Technoligies` | 只校验第二字段型号 |
+| After the meter is power-cycled or re-plugged, control transfers work but **every bulk transfer fails with EIO**. Once a port reset fixed it (settings unchanged); another time neither a reset nor INITIATE_CLEAR helped and only power-cycling the meter did | On EIO, `open()` releases the interface, resets the port, waits 2 s and reopens once; if it still fails, it asks the user to power-cycle the meter |
+| Reading queries only answer once the measurement completes: about 3.1 s per reading for shorted capacitance | Capacitance readings use their own 10 s deadline |
+| Right after switching to RATIO, a reading query answers `R` (not ready) and nothing else follows | After an `R` to a non-range query, wait up to 1 s more: a reply means `R` was a late stale reply and this is our answer; otherwise treat it as busy. Two `R`s in a row are also busy |
+| A late reply from the previous process (such as `R`) can still arrive after the drain, and the new connection's `*IDN?` receives it | The identity query is tried up to 3 times, draining between attempts |
+| The continuity function reports an auto-trigger interval of `30ms`; other functions report `400ms` | Display only |
+| After a client is interrupted, an unread reply stays in the IN endpoint, and the first query of the next session reads it | `open()` first drains the IN endpoint with a 100 ms timeout and logs the discarded bytes |
+| Occasionally a reply is duplicated or arrives one query late (a few times in hundreds of function switches), so answers no longer match questions | Before every query the IN endpoint is drained with a 1 ms timeout (about 1 ms cost); a lone `R` to a non-`RANGe?` query is skipped and the next frame read |
+| For about 0.1–2 s after a function or range change, queries answer `E` | Setters poll the readback; while sampling, `E` counts as busy and is tolerated for up to 10 s before an error |
+| `RANGe?` answers `R` (busy) about one time in three, even in steady state | Range reads retry briefly; `R` never causes a setter to be resent |
+| Setters are occasionally dropped silently (the readback keeps the old value) | When the readback shows a **definite different value**, the setter is resent every 1 s (these setters send absolute values and are idempotent) |
+| Any `:MEASure:<x>?` returns the currently displayed reading, whether or not `<x>` is the current function, and **does not switch function** | The unit comes only from `:FUNCtion?`; the function is read before and after each reading and the point is discarded if it changed |
+| `:FUNCtion?` returns `FREQUENCY`/`PERIOD` for frequency/period; the manual says `FREQ`/`PERI` | Both spellings are accepted |
+| `:FUNCtion?` returns the long names `RESISTANCE`/`FRESISTANCE`/`CONTINUITY`/`CAPACITANCE` | Mapped to the short tokens 2WR/4WR/CONT/CAP (the short tokens are used in CSV) |
+| Open resistance, continuity and diode read `-8.888000e+03` (the panel shows -8.888; the manual's diode example uses this value), not `9.9e37` | Treated like `9.9e37` as overload/open; the value is empty |
+| The manual lists resistance range 6 (100 MΩ), but the firmware clamps 6 to 5 (10 MΩ); auto range stops at 5 when open | Only ranges 0–5 are offered |
+| `:FUNCtion?` or `:MEASure:*?` occasionally receives the late reply of another query (such as `1` or `DCV`) | A reading must be in scientific notation (`d.dddddde±dd`, the format of every real reading) and a function must be a known name; otherwise it is treated like `E` (busy) and retried, without resending setters or ending the session. The format check cannot reject a misplaced reading that is itself in scientific notation, but range, resolution and function replies never pass it |
+| `RANGe?` for frequency/period does not return a range index; `DIGIt?` does not match the manual | No range control for these functions; `DIGIt` is not used |
+| After `:MEASure AUTO`, auto/manual cannot be read back, only the range auto-ranging picked | GUI and CLI show the current range as is and never claim "auto confirmed" |
+| With single trigger (`:TRIGger:SOURce SINGle`), `:MEASure?` keeps returning the held value; after a remote `:TRIGger:SINGle:TRIGger`, `:MEASure?` returns zero-length replies until the trigger is set back to auto | The trigger source is checked while sampling and sampling is refused unless it is AUTO; only switching back to auto trigger is offered |
+| `:DATAlog:CONFigure:*?` answers, but `:DATAlog:RUN?` and `:DATAlog:DATA?` are rejected (the manual restricts DATAlog to DM3054/DM3064) | On-instrument logging is not implemented |
+| `:CALCulate:FUNCtion?` works; every `:CALCulate:*:STATe?` is rejected | The math function is shown in the status; if it is not `none`, the GUI warns that readings may be processed |
+| The vendor name in the identity string is spelled `RIGOL Technoligies` | Only the second field (model) is checked |
 
-每次自动触发读数约 400 ms（`:TRIGger:AUTO:INTErval?`，分辨率 5½ 时 200 ms），`:MEASure:<x>?` 会等待下一次读数，因此单次查询本身约需 0.4 s。
+Each auto-trigger reading takes about 400 ms (`:TRIGger:AUTO:INTErval?`; 200 ms at 5½ digits), and `:MEASure:<x>?` waits for the next reading, so a single query takes about 0.4 s by itself.

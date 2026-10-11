@@ -1,81 +1,110 @@
-# DM3051 Linux 上位机
+# dm3051-linux
 
-RIGOL DM3051 台式万用表的 Linux 上位机。原厂已停止支持，旧驱动/Ultra Sigma 只能在 Windows 上运行；本项目用 Python 3.10+、PyUSB/libusb 直接实现仪器的旧版 USB 分包协议，无需 NI VISA、Wine 或 32 位运行库。提供 Tk 图形界面和无图形环境的 CLI。
+Linux software for the **RIGOL DM3051** bench digital multimeter. It gives you live readings, a trend plot, statistics, limit alarms and CSV logging in a small Tk window, or the same features from the command line.
 
-**验证状态（0.2.2）：** 已在 Arch Linux（内核 7.x、libusb 1.0.30、PyUSB 1.3.1）+ DM3051 固件 03.03.00.03.02.00 真机上验证：身份、全部被动测量功能切换、量程/自动量程、分辨率、触发检查、CSV、GUI 全流程、并发占用、陈旧回复恢复。电阻、通断、二极管、电容、电压比已在表笔断开与短接两种状态下验证切换、量程读回、开路 OVLD 与短接读数，**尚未接已知阻值/容值的元件验证精度**。详见 [TESTING](docs/TESTING.md)。
+RIGOL no longer supports this model. Its USB interface also does not work with standard VISA/usbtmc, because it speaks an older, non-standard framing. This project talks to the meter directly through libusb and implements that framing. It was worked out on a real DM3051 running firmware 03.03.
 
-## 功能
+![GUI with the simulated instrument](docs/screenshot.png)
 
-- 自动识别面板当前功能：DCV、ACV、DCI、ACI、2WR、4WR、频率、周期、通断、二极管、电容、电压比；读数带单位与 SI 前缀，过量程显示 OVLD。
-- 从上位机切换功能、量程（含自动）、分辨率（4½/5½/6½），每项设置都经仪器**读回确认**（自动量程除外：固件无法读回自动/手动状态，只显示当前所在量程）；固件偶尔丢弃设置命令，会自动重发直到确认或超时。
-- 实时曲线、最小/最大/平均/σ 统计、上下限超限提示、实时写盘记录（长时间采集不受内存缓存限制）、CSV 导出。
-- 每次读数后检查触发源：单次/外部触发下读数是保持值，不会当新数据记录（采集中在面板上切换也能发现），一键切回自动触发；显示仪器运算（CALCulate）状态。
-- CLI：定量采集写 CSV、状态 JSON、配置、单条 SCPI 查询/命令、报文跟踪。
-- 模拟器（`--demo`）复现真机的已知固件怪癖，GUI/CLI/单元测试都走同一套控制逻辑。
+## Features
 
-## 1. 安装（Arch）
+- **All 12 functions:** DC/AC voltage, DC/AC current, 2- and 4-wire resistance, frequency, period, continuity, diode, capacitance and voltage ratio.
+- **Follows the front panel:** switch functions on the meter and the software notices.
+- **Remote control:** function, manual or auto range, resolution (4½ / 5½ / 6½), and switching the trigger back to auto. Every setting is confirmed by reading it back from the meter, except auto range, which the firmware cannot report.
+- **Statistics and alarms:** min / max / mean / σ, plus upper and lower limit alarms.
+- **CSV logging:** rows are written and flushed one at a time, so a crash loses nothing. Overload and open circuit leave the value empty and keep the raw reply.
+- **Honest data:** the software never invents a reading. Held values under single trigger, misplaced replies and readings taken while the function changed are all rejected.
+- **No hardware needed to try it:** `--demo` mode runs a simulator that reproduces the firmware's known quirks.
+
+## Quick start
+
+On Arch Linux:
 
 ```sh
 sudo pacman -S --needed python python-pyusb libusb tk
 git clone https://github.com/ArchitektSpeer/dm3051-linux.git
 cd dm3051-linux
-sudo install -m 644 udev/70-dm3051.rules /etc/udev/rules.d/70-dm3051.rules
+
+# let the desktop user access the meter (this device only)
+sudo install -m 644 udev/70-dm3051.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
+# now re-plug the meter
+
+python3 -m dm3051            # GUI
+python3 -m dm3051 --demo     # GUI with the simulator, no meter needed
 ```
 
-重新插拔 USB。`uaccess` 规则只给当前本地登录用户访问这台仪器；SSH/无桌面环境的权限方案见 [安装文档](docs/INSTALL.md)。不要用 pip 修改 Arch 的系统 Python（其他发行版可用 venv 安装 `requirements.txt`）。
+On other distributions, install libusb and Tk from your package manager and `pip install -r requirements.txt` in a virtual environment. [docs/INSTALL.md](docs/INSTALL.md) covers this, plus SSH/headless permissions.
 
-## 2. 真机快速上手
+## Command line
 
 ```sh
-sh run.sh --list                         # 找到设备
-sh run.sh --status                       # 身份、功能、量程、分辨率、触发（JSON）
-sh run.sh --cli --count 10 --interval 1 --csv first-run.csv
-sh run.sh                                # GUI
+python3 -m dm3051 --list                                   # find the meter
+python3 -m dm3051 --cli --count 100 --interval 0.5 --csv run.csv
+python3 -m dm3051 --cli --function 2WR --range AUTO --resolution 2
+python3 -m dm3051 --status                                 # current settings as JSON
+python3 -m dm3051 --trigger AUTO --configure-only          # leave single-trigger mode
+python3 -m dm3051 --query '*IDN?' --trace                  # one query, with packet log
 ```
 
-GUI：开始 / 连接 → 在“功能/量程/分辨率”下拉框中切换（或直接按面板按键，程序会跟随）→ 需要长时间采集时点“实时记录…” → 停止 / 断开 → 保存 CSV。
+`--function` takes DCV ACV DCI ACI 2WR 4WR FREQ PERI CONT DIODE CAP RATIO. All options are listed in [docs/INSTALL.md](docs/INSTALL.md#options).
 
-CLI 配置示例（参数先整体校验再下发；除自动量程外每项都读回确认，失败退出码为 1）：
+## Python API
 
-```sh
-sh run.sh --cli --function ACV --range AUTO --resolution 2 --count 20 --csv acv.csv
-sh run.sh --configure-only --function DCV --range 2      # DCV 20 V 量程
-sh run.sh --trigger AUTO --status                         # 从单次触发切回自动
-sh run.sh --query ':MEASure:VOLTage:DC:IMPEdance?'
+```python
+from dm3051.usb_device import DM3051
+
+with DM3051.open() as meter:
+    meter.set_function("DCV")
+    r = meter.measure()
+    print(r.value, r.function.unit)   # value is None on overload / open circuit
 ```
 
-量程索引见 [DEVELOPMENT](docs/DEVELOPMENT.md#功能与量程表)。多个候选 USB 设备时必须指定 `--bus N --address N`。实际 VID/PID 是 **0400:09c4**，同时兼容 **1ab1:09c4**；最终以 `*IDN?` 返回的型号 DM3051 为准。
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) has the full API, the exception hierarchy and the function/range table.
 
-## 3. 不接仪器的演示
+## Status
 
-```sh
-sh run.sh --demo
-sh run.sh --demo --cli --function ACV --count 5 --interval 0.2 --csv demo.csv
-python3 -m unittest discover -s tests -v
-```
+Version 0.2.2 has been tested on one DM3051 (firmware 03.03.00.03.02.00) under Arch Linux with Python 3.14, PyUSB 1.3.1 and libusb 1.0.30.
 
-模拟模式在标题和身份信息里明确标识，数值不是硬件测量结果。
-
-## 4. 边界与安全
-
-- 采样是主机轮询：每点先读功能，再读数值，再确认功能未变；面板自动触发间隔（默认 400 ms）决定新读数的产生速度，主机 sleep 不是精确采样时钟。
-- 仪器端 DATAlog 与扫描卡命令在本型号/固件上不可用（`DATAlog:RUN?`、`DATAlog:DATA?` 被拒绝；本机无扫描卡），因此未实现。
-- 切换到电阻/通断/二极管/电容前，GUI 会提示该功能会从输入端输出测试电流。
-- 不复位、不改校准、不刷固件、不改接口设置；`--command` 只发送用户明确给出的命令。
-- CSV 列：`timestamp,function,value,unit,raw`（0.1 版是 `timestamp,volts,raw`）；过量程行 value 为空、raw 保留原文。CLI 拒绝覆盖已有文件。
-- USB 超时/传输错误即停止并断开，不自动重放设置。退出时尝试返回本地模式并恢复内核 `usbtmc` 驱动；必要时按面板 **Single**。
-
-## 文档目录
-
-| 文档 | 用途 |
+| Area | State |
 |---|---|
-| [INSTALL](docs/INSTALL.md) | Arch 环境、图形/纯终端、权限、全部运行参数 |
-| [PROTOCOL](docs/PROTOCOL.md) | 旧 USB 协议逐字段说明、Linux 下的固件怪癖与对策 |
-| [DEVELOPMENT](docs/DEVELOPMENT.md) | 模块结构、API、线程模型、功能/量程表、扩展方法 |
-| [CONTROL-ROADMAP](docs/CONTROL-ROADMAP.md) | 功能域完成状态与后续计划 |
-| [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | USB 不识别、权限、占用、EIO、超时、错误回复 |
-| [TESTING](docs/TESTING.md) | 单元测试、Linux 真机验收记录与模板 |
-| [SOURCES](docs/SOURCES.md) | 原厂文档、依赖与参考过的开源上位机 |
+| Connecting, identity, panel tracking, CSV logging | Verified on hardware |
+| Function switching and readings for all 12 functions | Verified on hardware (leads open and shorted) |
+| Range and resolution setting with readback | Verified on hardware |
+| GUI on the real meter | Verified: live record matched the export row for row |
+| Accuracy against known resistors, capacitors and diodes | **Not yet tested** |
+| Unplugging the meter mid-session | **Not yet tested** |
 
-项目源码使用 MIT 许可；第三方依赖和手册保留各自许可。
+Other firmware versions and the related DM3058/DM3068 are untested. Reports are welcome; please include the `--trace` log.
+
+## Things worth knowing
+
+- **Only one program can talk to the meter at a time.** A second one gets `Resource busy`.
+- **`Input/Output Error` right after power-up:** the program resets the USB port once by itself. If that fails, power-cycle the meter. See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md#inputoutput-error-eio).
+- **Capacitance is slow.** Each reading takes about 3 s, and longer for large capacitors.
+- **Single or external trigger:** sampling is refused, because the meter would just repeat a held value. Use the GUI's *Auto trigger* button or `--trigger AUTO`.
+- **Resistance, continuity, diode and capacitance drive a current out of the input jacks.** The GUI asks for confirmation before switching to them.
+
+## Documentation
+
+| File | Contents |
+|---|---|
+| [INSTALL](docs/INSTALL.md) | Dependencies, udev rules, every command-line option |
+| [PROTOCOL](docs/PROTOCOL.md) | The legacy USB framing byte by byte, and every firmware quirk found so far |
+| [DEVELOPMENT](docs/DEVELOPMENT.md) | Code layout, threading model, API, function table, how to add a control |
+| [TESTING](docs/TESTING.md) | Unit tests and the hardware acceptance log |
+| [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) | Errors and what to do about them |
+| [CONTROL-ROADMAP](docs/CONTROL-ROADMAP.md) | Coverage of the SCPI command groups, and what's next |
+| [SOURCES](docs/SOURCES.md) | Manuals and the projects consulted |
+
+## Development
+
+```sh
+python3 -m unittest discover -s tests -v    # 41 tests, no hardware needed
+```
+
+The real meter and the simulator share all measurement and settings logic. Only the byte transport differs, so most behaviour can be tested without hardware.
+
+## License
+
+MIT; see [LICENSE](LICENSE). Not affiliated with RIGOL. "RIGOL" and "DM3051" are used only to identify the hardware.

@@ -15,7 +15,7 @@ _PREFIXES = {-12: "p", -9: "n", -6: "µ", -3: "m", 0: "", 3: "k", 6: "M", 9: "G"
 
 def format_value(value, unit, digits=7):
     if value is None:
-        return "OVLD 过量程"
+        return "OVLD"
     if value == 0 or not unit:
         return f"{value:.{digits}g} {unit}".strip()
     exponent = min(max(math.floor(math.log10(abs(value)) / 3) * 3, -12), 9)

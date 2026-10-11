@@ -1,37 +1,37 @@
-# 功能路线
+# Feature roadmap
 
-准确的命令拼写、参数枚举、型号差异以原厂 Programming Guide 为准（见 SOURCES）；章节页码采用手册页脚编号。DM3051 固件 03.03 与手册不一致之处记录在 PROTOCOL。
+Exact command spelling, parameter values and model differences follow the vendor Programming Guide (see SOURCES); page numbers are the manual's footer numbers. Where firmware 03.03 of the DM3051 disagrees with the manual, it is recorded in PROTOCOL.
 
-| 功能域 | 手册章节 | 状态（0.2.2） |
+| Area | Manual section | Status (0.2.2) |
 |---|---|---|
-| 身份和公共命令 | Common Commands 2-2 | `*IDN?`、`CMDSet?` 已用；`*RST` 不提供（会恢复出厂设置），`*OPT?` 被固件拒绝 |
-| 测量功能选择 | :FUNCtion 2-4 | 完成：12 种功能枚举、自动识别面板功能、setter + 读回 + 重发 |
-| 测量、量程 | :MEAsure 2-7 | 完成：各功能读数与单位、手动量程（读回确认）、自动量程（只发送，固件不可读回自动状态）；过量程识别。`DIGIt` 回复与手册不符，不使用 |
-| 分辨率 | :RESOlution 2-21 | 完成：4½/5½/6½ 设置与读回 |
-| 系统信息 | :SYSTem 2-26 | 状态中显示；`EDITion?`/`TYPE?`/`SERIal?`/`SCANserial?` 可用，`ERRor?`/`VERSion?` 被拒绝 |
-| 工具与接口设置 | :UTILity 2-31 | 不修改，避免改动正在使用的接口导致失联 |
-| 触发 | :TRIGger 2-35 | 检查触发源；非 AUTO 拒绝采样（读数为保持值）；提供切回 AUTO。远程单次触发后读数不可取回，不提供 |
-| 计算功能 | :CALCulate 2-39 | 显示 `CALCulate:FUNCtion?` 并警告；统计/上下限改为在上位机实现（固件的 `*:STATe?` 被拒绝） |
-| 仪器端数据记录 | :DATAlog 2-45 | 本型号不可用（手册限 DM3054/DM3064；`RUN?`/`DATA?` 被拒绝） |
-| 扫描 | :SCAN 2-50 | 需扫描卡；本机 `SCANserial?` 返回 NONE，不实现 |
-| Agilent / Fluke 兼容集 | Chapter 3 | 默认 RIGOL 模式，不自动切换兼容集 |
+| Identity and common commands | Common Commands 2-2 | `*IDN?` and `CMDSet?` used; `*RST` not offered (it restores factory settings); `*OPT?` rejected by the firmware |
+| Function selection | :FUNCtion 2-4 | Done: all 12 functions, panel function detected automatically, setter + readback + resend |
+| Measurement and range | :MEAsure 2-7 | Done: readings and units for every function, manual range (confirmed by readback), auto range (sent only; the firmware cannot read back auto mode), overload detection. `DIGIt` replies do not match the manual and are not used |
+| Resolution | :RESOlution 2-21 | Done: 4½/5½/6½ set and read back |
+| System information | :SYSTem 2-26 | Shown in the status; `EDITion?`/`TYPE?`/`SERIal?`/`SCANserial?` work, `ERRor?`/`VERSion?` are rejected |
+| Utility and interface settings | :UTILity 2-31 | Not changed, to avoid cutting off the interface in use |
+| Trigger | :TRIGger 2-35 | Trigger source checked; sampling refused unless AUTO (readings are held values otherwise); switching back to AUTO offered. Readings after a remote single trigger cannot be retrieved, so it is not offered |
+| Math | :CALCulate 2-39 | `CALCulate:FUNCtion?` shown with a warning; statistics and limits are done on the host instead (the firmware rejects `*:STATe?`) |
+| On-instrument logging | :DATAlog 2-45 | Not available on this model (the manual restricts it to DM3054/DM3064; `RUN?`/`DATA?` are rejected) |
+| Scanning | :SCAN 2-50 | Needs a scanner card; this unit's `SCANserial?` returns NONE; not implemented |
+| Agilent / Fluke compatibility sets | Chapter 3 | Stays in the default RIGOL mode; never switches command set automatically |
 
-## 每个功能的完成标准
+## Definition of done for each feature
 
-1. 正确识别硬件和固件支持；缺少配件或固件不支持时明确显示不支持。
-2. 命令参数来自对应模式的手册，先查询当前状态再做设置。
-3. 设置成功依据仪器读回或可观察行为，不依据 bulk write 字节数。
-4. 保持一个 USB 所有者；控制与采集串行，不让迟到的回复进入下一条查询。
-5. 面板与上位机一致，过量程/无效值可识别，断线与超时不会假显示正常。
-6. 日志可追溯命令、响应、时间；单元测试覆盖解析，真机测试覆盖行为。
+1. Hardware and firmware support are detected correctly; when an accessory is missing or the firmware does not support something, the software says so.
+2. Command parameters come from the manual for that mode; the current state is queried before anything is set.
+3. Success is judged by instrument readback or observable behaviour, never by the number of bytes a bulk write accepted.
+4. There is one USB owner; control and sampling are serialised so a late reply never leaks into the next query.
+5. Panel and host agree, overload and invalid values are recognisable, and disconnects or timeouts never look like normal operation.
+6. Logs trace commands, responses and times; unit tests cover parsing and hardware tests cover behaviour.
 
-## 后续
+## Next
 
-- 用已知电阻（含四线接法）、电容、二极管验证 2WR、4WR、CAP、DIODE 的数值；开路与短接行为已验证。
-- 交流电压/电流的副显示频率（`:MEASure:VOLTage:AC:FREQuency?`）作为附加列。
-- 断线后自动重连（需先确认重连后不会读到旧事务的回复）。
-- 配置持久化（上次的间隔、上下限、窗口）与打包（AUR PKGBUILD）。
+- Verify the values of 2WR, 4WR, CAP and DIODE with a known resistor (including a 4-wire connection), capacitor and diode; open and shorted behaviour is already verified.
+- The secondary frequency display of AC voltage/current (`:MEASure:VOLTage:AC:FREQuency?`) as an extra column.
+- Automatic reconnect after a disconnect (first confirm that a reconnect cannot receive replies from an old transaction).
+- Persistent settings (last interval, limits, window) and packaging (AUR PKGBUILD).
 
-校准与固件更新不属于本项目。不要把校准口令或出厂重置作为连接修复步骤。
+Calibration and firmware updates are outside the scope of this project. Never use a calibration password or a factory reset as a connection fix.
 
-已知实机参考：DM3051 / 序列号 DM3H1035xxxxx / 固件 03.03.00.03.02.00。此项目只要求型号 DM3051，不硬编码序列号；未证明其他固件完全一致。
+Known reference unit: DM3051 / serial DM3H1035xxxxx / firmware 03.03.00.03.02.00. The project only requires the model to be DM3051 and does not hard-code serial numbers; other firmware versions are not proven to behave identically.
