@@ -94,6 +94,8 @@ def header(message, tag, length):
 
 class LegacyProtocol:
     """A synchronous, single-owner transport; do not call concurrently."""
+    timeout_errors = (TimeoutError,)  # the USB device adds PyUSB's timeout
+    stray_wait_s = 1.0
     def __init__(self, device, out_endpoint=0x01, in_endpoint=0x82, timeout_ms=3000):
         self.device = device
         self.out_endpoint = out_endpoint
@@ -159,10 +161,11 @@ class LegacyProtocol:
         except UnicodeDecodeError:
             raise InstrumentError(f"Non-ASCII reply: {bytes(payload[:32]).hex(' ')}") from None
 
-    def query(self, command):
+    def query(self, command, timeout_ms=None):
+        """timeout_ms overrides the transaction deadline for one slow query."""
         if "?" not in command:
             raise ValueError("query() requires a query; use send_command() for setters")
-        deadline = time.monotonic() + self.timeout_ms / 1000
+        deadline = time.monotonic() + (timeout_ms or self.timeout_ms) / 1000
         data = self._command(command)
         self._before_query()
         # This device requires separate transfers, no payload alignment padding.
@@ -171,9 +174,15 @@ class LegacyProtocol:
         self._write(header(2, 2, 64), deadline)
         answer = self._read_reply(deadline)
         if answer == "R" and "RANG" not in command.upper():
-            # A late busy marker from an earlier RANGe? query; our own reply follows it.
-            log.warning("Skipping stray R reply before answer to %s", command)
-            answer = self._read_reply(deadline)
+            # Either a late busy marker from an earlier RANGe? query, with our own reply right
+            # behind it, or (seen on RATIO just after switching) the instrument's own "not ready".
+            try:
+                answer = self._read_reply(min(deadline, time.monotonic() + self.stray_wait_s))
+                log.warning("Skipped stray R reply before answer to %s", command)
+            except self.timeout_errors:
+                raise RejectedError(f"Instrument not ready (R) for: {command}") from None
+            if answer == "R":  # never a valid answer here
+                raise RejectedError(f"Instrument not ready (R) for: {command}")
         if answer == "E":
             raise RejectedError(f"Instrument rejected command: {command}")
         return answer
@@ -187,6 +196,9 @@ class MeterControl:
     settle_s = 5.0
     poll_s = 0.1
     resend_s = 1.0
+    # The instrument answers a reading query only when a measurement completes. Capacitance
+    # takes about 3.1 s per reading with shorted probes (more for large capacitors).
+    slow_reading_ms = {"CAP": 10000}
 
     def _apply(self, setter, command, accept, what):
         """Send an absolute (idempotent) setter and poll its readback. Firmware 03.03 sometimes
@@ -225,7 +237,9 @@ class MeterControl:
         function = self.function()
         if expected and function.token != expected:
             raise InstrumentError(f"Current mode is {function.token}, expected {expected}.")
-        raw = self.query(f":MEASure:{function.path}?")
+        command = f":MEASure:{function.path}?"
+        slow = self.slow_reading_ms.get(function.token)
+        raw = self.query(command, timeout_ms=max(slow, self.timeout_ms)) if slow else self.query(command)
         if self.function() != function:
             raise RejectedError("Function changed during the reading; discarded")
         return Reading(function, parse_reading(raw), raw)
@@ -329,16 +343,48 @@ class DM3051(MeterControl, LegacyProtocol):
         self.closed = False
         self.identity = ""
 
-    @classmethod
-    def open(cls, bus=None, address=None, timeout_ms=3000):
+    @staticmethod
+    def _find(bus, address):
         import usb.core
-        import usb.util
         candidates = [d for d in usb.core.find(find_all=True)
                       if d.idVendor in (0x0400, 0x1AB1) and d.idProduct == 0x09C4
                       and (bus is None or d.bus == bus) and (address is None or d.address == address)]
         if len(candidates) != 1:
             raise InstrumentError(f"Found {len(candidates)} matching devices. Use --list / --bus / --address.")
-        d = candidates[0]
+        return candidates[0]
+
+    @classmethod
+    def open(cls, bus=None, address=None, timeout_ms=3000):
+        """Open, claim and identify. Seen on Linux: every bulk transfer fails with EIO while
+        control requests still work. Once, a port reset from an unclaimed handle followed by
+        a fresh open cured it (settings kept); another time only power-cycling the instrument did.
+        So: one reset-and-reopen, then a clear message."""
+        import usb.core
+        import usb.util
+        try:
+            return cls._open(cls._find(bus, address), timeout_ms)
+        except usb.core.USBError as exc:
+            if exc.errno != 5:
+                raise
+            log.warning("Bulk transfers fail with EIO; resetting the USB port and reopening once")
+        d = cls._find(bus, address)
+        try:
+            d.reset()
+        finally:
+            usb.util.dispose_resources(d)
+        time.sleep(2)
+        try:
+            return cls._open(cls._find(bus, address), timeout_ms)
+        except usb.core.USBError as exc:
+            if exc.errno != 5:
+                raise
+            raise InstrumentError("USB bulk transfers fail with EIO even after a port reset. "
+                                  "Power-cycle the instrument and try again.") from exc
+
+    @classmethod
+    def _open(cls, d, timeout_ms):
+        import usb.core
+        import usb.util
         detached, claimed, interface = False, False, None
         try:
             try:
@@ -363,15 +409,18 @@ class DM3051(MeterControl, LegacyProtocol):
             usb.util.claim_interface(d, interface)
             claimed = True
             instrument = cls(d, interface, out_ep, in_ep, detached, usb.util, timeout_ms)
+            instrument.timeout_errors = (TimeoutError, usb.core.USBTimeoutError)
             instrument.drain()
-            try:
-                instrument.identity = instrument.query("*IDN?")
-            except usb.core.USBError as exc:
-                # Seen on Linux: every bulk transfer fails with EIO although control requests
-                # work, until a USB port reset. The reset keeps the instrument's settings.
-                log.warning("Identity query failed (%s); resetting the USB port once", exc)
-                d.reset()
-                instrument.identity = instrument.query("*IDN?")
+            for _ in range(3):
+                # A reply left by the previous client can still arrive after the drain.
+                try:
+                    instrument.identity = instrument.query("*IDN?")
+                except RejectedError:
+                    instrument.identity = ""
+                if instrument.identity.count(",") >= 3:
+                    break
+                time.sleep(0.2)
+                instrument.drain()
             fields = instrument.identity.split(",")
             if len(fields) < 3 or fields[1].strip() != "DM3051":
                 raise InstrumentError(f"Unexpected instrument: {instrument.identity}")

@@ -46,7 +46,9 @@ class SimulatedMeter(MeterControl):
             self.ranges[self.function_token] = 0  # pretend the input is small
         # Anything else is silently ignored, like the real firmware.
 
-    def query(self, command):
+    timeout_ms = 3000
+
+    def query(self, command, timeout_ms=None):
         time.sleep(self.latency)
         self.log.append(command)
         node = command.strip().upper()

@@ -25,6 +25,8 @@ class Device:
     def write(self, ep, data, timeout):
         return len(data)
     def read(self, ep, size, timeout):
+        if not self.replies:
+            raise TimeoutError("no reply")
         return self.replies.pop(0)
 
 
@@ -42,6 +44,17 @@ class ProtocolQuirkTests(unittest.TestCase):
     def test_stray_r_skipped_except_for_range(self):
         self.assertEqual(LegacyProtocol(Device([reply(b"R"), reply(b"DCV")])).query(":FUNCtion?"), "DCV")
         self.assertEqual(LegacyProtocol(Device([reply(b"R")])).query(":MEASure:VOLTage:DC:RANGe?"), "R")
+
+    def test_two_stray_r_are_busy(self):
+        with self.assertRaises(RejectedError), redirect_stderr(io.StringIO()):
+            LegacyProtocol(Device([reply(b"R"), reply(b"R")])).query("*IDN?")
+
+    def test_lone_r_is_busy_not_timeout(self):
+        # Seen on RATIO right after switching: the reading query itself answers R.
+        protocol = LegacyProtocol(Device([reply(b"R")]))
+        protocol.stray_wait_s = 0.05
+        with self.assertRaises(RejectedError), redirect_stderr(io.StringIO()):
+            protocol.query(":MEASure:VOLTage:DC:RATIo?")
 
 
 class ParsingTests(unittest.TestCase):
@@ -168,6 +181,19 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(InstrumentError):
             m.measure_dcv()
 
+    def test_capacitance_reading_gets_long_deadline(self):
+        m = meter(switch_rejects=0)
+        m.set_function("CAP")
+        real, seen = m.query, {}
+
+        def spy(command, timeout_ms=None):
+            seen[command] = timeout_ms
+            return real(command)
+        m.query = spy
+        m.measure()
+        self.assertGreaterEqual(seen[":MEASure:CAPacitance?"], 10000)
+        self.assertIsNone(seen[":FUNCtion?"])
+
     def test_trigger(self):
         m = meter()
         m.send_command(":TRIGger:SOURce SINGle")
@@ -233,6 +259,54 @@ class SamplerTests(unittest.TestCase):
         self.assertEqual((s.n, s.overloads, s.min, s.max, s.mean), (3, 1, 1.0, 3.0, 2.0))
         self.assertAlmostEqual(s.stdev, 1.0)
         self.assertIsNone(Stats().stdev)
+
+
+class OpenRecoveryTests(unittest.TestCase):
+    """DM3051.open() with fake PyUSB modules: EIO -> one reset and reopen -> clear message."""
+    def run_open(self, outcomes):
+        import sys
+        import types
+        from dm3051.usb_device import DM3051
+
+        class USBError(Exception):
+            def __init__(self, errno):
+                super().__init__(f"errno {errno}")
+                self.errno = errno
+        core = types.SimpleNamespace(USBError=USBError)
+        util = types.SimpleNamespace(dispose_resources=lambda d: None)
+        usb = types.ModuleType("usb")
+        usb.core, usb.util = core, util
+        device = mock.Mock()
+        results = iter(outcomes)
+
+        def fake_open(d, timeout_ms):
+            result = next(results)
+            if isinstance(result, int):
+                raise USBError(result)
+            return result
+        with mock.patch.dict(sys.modules, {"usb": usb, "usb.core": core, "usb.util": util}), \
+                mock.patch.object(DM3051, "_find", staticmethod(lambda bus, address: device)), \
+                mock.patch.object(DM3051, "_open", staticmethod(fake_open)), \
+                mock.patch("dm3051.usb_device.time.sleep"), redirect_stderr(io.StringIO()):
+            try:
+                return DM3051.open(), device
+            except Exception as exc:
+                return exc, device
+
+    def test_eio_reset_then_success(self):
+        result, device = self.run_open([5, "opened"])
+        self.assertEqual(result, "opened")
+        device.reset.assert_called_once()
+
+    def test_eio_twice_asks_for_power_cycle(self):
+        result, device = self.run_open([5, 5])
+        self.assertIsInstance(result, InstrumentError)
+        self.assertIn("Power-cycle", str(result))
+
+    def test_other_usb_errors_are_not_retried(self):
+        result, device = self.run_open([16])  # EBUSY: another program owns the meter
+        self.assertEqual(getattr(result, "errno", None), 16)
+        device.reset.assert_not_called()
 
 
 class CliTests(unittest.TestCase):

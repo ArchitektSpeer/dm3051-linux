@@ -24,13 +24,15 @@ lsusb -d 1ab1:09c4
 
 ## Input/Output Error（EIO）
 
-现象：`--list` 能看到设备、权限正常，但第一条查询就报 `[Errno 5] Input/Output Error`。真机上观察到过：设备处于异常状态时所有 bulk 传输失败、控制传输正常。程序会自动做一次 USB 端口复位并重试（日志 `resetting the USB port once`），端口复位不改变仪器设置。仍失败时重新插拔 USB 或重启仪器。
+现象：`--list` 能看到设备、权限正常，但第一条查询就报 `[Errno 5] Input/Output Error`。真机上观察到两次，都在仪器重新上电/插拔之后：所有 bulk 传输失败、控制传输正常。第一次，从未占用的句柄做 USB 端口复位、等 2 秒后重新打开即恢复（设置不变）；第二次复位、USBTMC INITIATE_CLEAR（仪器回 `0x80` 失败）都无效，**只有重启仪器**才恢复。程序会自动做一次“释放 → 复位 → 等 2 秒 → 重新打开”（日志 `resetting the USB port and reopening once`）；仍失败时报 `Power-cycle the instrument`，请关机 5 秒再开，等面板回到测量画面后重连。
 
 ## Unexpected instrument / 答非所问
 
 上一个程序中断时可能在仪器里留下未读回复。程序连接时会先读空（日志 `Discarded N stale bytes`），每条查询前也会快速检查一次。若仍出现，关闭所有访问仪器的程序后重新连接。
 
 ## USB 超时、错误头、回复 E
+
+- 电容读数要等一次测量完成才回复：表笔短接时每个读数约 3.1 秒，大电容更久。程序对电容读数单独使用 10 秒（或更长的 `--timeout`）截止时间；其他查询超时才说明通信有问题。
 
 - 用 `--query '*IDN?' --trace 2>trace.log` 先测身份，不先运行数据记录。
 - `--timeout 5000` 仅延长等待，不能修复错误协议。

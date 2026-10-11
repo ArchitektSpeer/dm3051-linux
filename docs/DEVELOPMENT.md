@@ -41,9 +41,9 @@ with DM3051.open(timeout_ms=3000) as meter:
 
 | 方法 | 说明 |
 |---|---|
-| `DM3051.open(bus=None, address=None, timeout_ms=3000)` | 选择唯一候选、claim、读空陈旧回复、校验型号；EIO 时复位端口重试一次 |
+| `DM3051.open(bus=None, address=None, timeout_ms=3000)` | 选择唯一候选、claim、读空陈旧回复、校验型号（身份查询最多 3 次）；EIO 时释放、复位端口、等 2 秒、重新打开一次，仍失败抛 `InstrumentError` 提示重启仪器 |
 | `identity` | 连接时 `*IDN?` 的结果，不是 USB descriptor |
-| `query(cmd)` / `send_command(cmd)` | 单条 ASCII 查询/设置；`E` 或空回复抛 `RejectedError`；setter 无回复、不保证被接受 |
+| `query(cmd, timeout_ms=None)` / `send_command(cmd)` | 单条 ASCII 查询/设置；`E` 或空回复抛 `RejectedError`；setter 无回复、不保证被接受 |
 | `function()` | 当前功能（`Function` 元组） |
 | `measure(expected=None)` | 读功能→读数→再读功能；过量程 `value=None`；功能中途变化抛 `RejectedError` |
 | `measure_dcv()` | 0.1 版兼容接口：必须是 DCV 且不过量程，返回 `(float, raw)` |
@@ -66,14 +66,14 @@ with DM3051.open(timeout_ms=3000) as meter:
 | 交流电压 | ACV | V | 200 mV, 2 V, 20 V, 200 V, 750 V | 有 | 否 | 已验证 |
 | 直流电流 | DCI | A | 2 mA, 20 mA, 200 mA, 1 A, 10 A | 有 | 否 | 已验证切换与读数 |
 | 交流电流 | ACI | A | 20 mA, 200 mA, 2 A, 10 A | 有 | 否 | 已验证切换与读数 |
-| 两线电阻 | 2WR（固件 `RESISTANCE`） | Ω | 200 Ω, 2 kΩ, 20 kΩ, 200 kΩ, 1 MΩ, 10 MΩ | 有 | 是 | 已验证切换、量程读回、开路 OVLD（未接已知电阻） |
-| 四线电阻 | 4WR（固件 `FRESISTANCE`） | Ω | 同上 | 有 | 是 | 已验证切换、量程读回（未接已知电阻） |
+| 两线电阻 | 2WR（固件 `RESISTANCE`） | Ω | 200 Ω, 2 kΩ, 20 kΩ, 200 kΩ, 1 MΩ, 10 MΩ | 有 | 是 | 已验证：切换、0–5 档读回、开路 OVLD、短接约 1.5 Ω（表笔+接触电阻，未做 REL 清零） |
+| 四线电阻 | 4WR（固件 `FRESISTANCE`） | Ω | 同上 | 有 | 是 | 已验证切换、0–5 档读回；只接两线时 Sense 悬空，读数漂移或 OVLD 属正常（未接四线已知电阻） |
 | 频率 | FREQUENCY | Hz | 不提供 | 无 | 否 | 已验证切换与读数 |
 | 周期 | PERIOD | s | 不提供 | 无 | 否 | 已验证切换与读数 |
-| 通断 | CONT（固件 `CONTINUITY`） | Ω | 不提供 | 无 | 是 | 已验证切换、开路 OVLD |
-| 二极管 | DIODE | V | 不提供 | 无 | 是 | 已验证切换、开路 OVLD |
-| 电容 | CAP（固件 `CAPACITANCE`） | F | 2 nF … 200 µF（6 档） | 有 | 是 | 已验证切换、0–5 档读回、开路杂散电容读数 |
-| 电压比 | RATIO | — | 不提供 | 有 | 否 | 已验证切换与读数（输入悬空） |
+| 通断 | CONT（固件 `CONTINUITY`） | Ω | 不提供 | 无 | 是 | 已验证：开路 OVLD、短接约 1.5 Ω |
+| 二极管 | DIODE | V | 不提供 | 无 | 是 | 已验证：开路 OVLD、短接约 1.8 mV（未接真实二极管） |
+| 电容 | CAP（固件 `CAPACITANCE`） | F | 2 nF … 200 µF（6 档） | 有 | 是 | 已验证：0–5 档读回、开路约 131.6 pF（杂散）、短接 OVLD（每个读数约 3.1 s）；未接已知电容 |
+| 电压比 | RATIO | — | 不提供 | 有 | 否 | 已验证切换与读数（切换后先回数次 `R`） |
 
 分辨率索引：0 = 4½，1 = 5½，2 = 6½。功能表是 `usb_device.FUNCTIONS`，新增或修正一项即可同时影响 CLI、GUI 和模拟器。把“未验证”改为“已验证”前，请按 TESTING 在真机上确认切换、读数、过量程和读回。
 
