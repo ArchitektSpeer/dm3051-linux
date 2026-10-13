@@ -45,7 +45,7 @@ A program that was interrupted can leave an unread reply in the instrument. On c
 - `Current mode is X, expected Y`: a function was given with `--function`, but the panel was switched during sampling. Without `--function`, the program follows the panel.
 - `Trigger source is SINGLE/EXT`: with single or external trigger the readings are held values, so the program refuses to sample. Run `sh run.sh --trigger AUTO --status`, or press "Auto trigger" in the GUI.
 - `not confirmed by readback`: the instrument did not confirm the setting within 5 s (for example the function has no such range, or the meter is in a menu). The connection remains usable; try again.
-- Overload shows OVLD; in the CSV the value is empty and raw keeps the original text. An unparseable reply stops sampling and keeps the data collected so far. Small fluctuations with open leads are not a software error.
+- Overload shows OVLD; in the CSV the value is empty and raw keeps the original text. An unparseable or misplaced reply is treated as busy: the CLI retries for up to 10 s and then exits with an error (the rows written so far stay in the CSV); the GUI keeps retrying and shows "Instrument busy or reply out of step" in the status line. Small fluctuations with open leads are not a software error.
 
 ## Remote mode, waiting on stop
 

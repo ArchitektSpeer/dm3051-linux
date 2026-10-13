@@ -1,6 +1,6 @@
 # dm3051-linux
 
-Linux software for the **RIGOL DM3051** bench digital multimeter. It gives you live readings, a trend plot, statistics, limit alarms and CSV logging in a small Tk window, or the same features from the command line.
+Linux software for the **RIGOL DM3051** bench digital multimeter. It gives you live readings, a trend plot, statistics, limit alarms and CSV logging in a small Tk window. A command-line mode covers readings, statistics, settings and CSV logging without a display; the plot and the limit alarms are GUI-only.
 
 RIGOL no longer supports this model. Its USB interface also does not work with standard VISA/usbtmc, because it speaks an older, non-standard framing. This project talks to the meter directly through libusb and implements that framing. It was worked out on a real DM3051 running firmware 03.03.
 
@@ -14,7 +14,7 @@ RIGOL no longer supports this model. Its USB interface also does not work with s
 - **Statistics and alarms:** min / max / mean / σ, plus upper and lower limit alarms.
 - **CSV logging:** rows are written and flushed one at a time, so a crash loses nothing. Overload and open circuit leave the value empty and keep the raw reply.
 - **Honest data:** the software never invents a reading. Held values under single trigger, misplaced replies and readings taken while the function changed are all rejected.
-- **No hardware needed to try it:** `--demo` mode runs a simulator that reproduces the firmware's known quirks.
+- **No hardware needed to try it:** `--demo` mode runs a simulator that mimics the meter's SCPI behaviour (busy replies after switching, firmware names, range clamping, open-circuit value). Timing and USB-level quirks such as late replies and EIO are covered by unit tests, not by the simulator.
 
 ## Quick start
 
@@ -100,7 +100,7 @@ Other firmware versions and the related DM3058/DM3068 are untested. Reports are 
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -v    # 41 tests, no hardware needed
+python3 -m unittest discover -s tests -v    # 43 tests, no hardware needed
 ```
 
 The real meter and the simulator share all measurement and settings logic. Only the byte transport differs, so most behaviour can be tested without hardware.

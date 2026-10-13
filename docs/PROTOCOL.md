@@ -54,7 +54,7 @@ On close, a best-effort class/interface IN control request A1/A1 is sent (bmRequ
 
 ## Firmware behaviour observed on Linux (03.03.00.03.02.00)
 
-All of these were reproduced on the real instrument under Arch Linux. Each has handling in the code and is covered by unit tests and the simulator:
+All of these were reproduced on the real instrument under Arch Linux. Each has handling in the code and is covered by unit tests; the SCPI-level ones are also reproduced by the simulator (`--demo`):
 
 | Behaviour | Handling |
 |---|---|
@@ -73,7 +73,7 @@ All of these were reproduced on the real instrument under Arch Linux. Each has h
 | `:FUNCtion?` returns the long names `RESISTANCE`/`FRESISTANCE`/`CONTINUITY`/`CAPACITANCE` | Mapped to the short tokens 2WR/4WR/CONT/CAP (the short tokens are used in CSV) |
 | Open resistance, continuity and diode read `-8.888000e+03` (the panel shows -8.888; the manual's diode example uses this value), not `9.9e37` | Treated like `9.9e37` as overload/open; the value is empty |
 | The manual lists resistance range 6 (100 MΩ), but the firmware clamps 6 to 5 (10 MΩ); auto range stops at 5 when open | Only ranges 0–5 are offered |
-| `:FUNCtion?` or `:MEASure:*?` occasionally receives the late reply of another query (such as `1` or `DCV`) | A reading must be in scientific notation (`d.dddddde±dd`, the format of every real reading) and a function must be a known name; otherwise it is treated like `E` (busy) and retried, without resending setters or ending the session. The format check cannot reject a misplaced reading that is itself in scientific notation, but range, resolution and function replies never pass it |
+| `:FUNCtion?` or `:MEASure:*?` occasionally receives the late reply of another query (such as `1` or `DCV`) | A reading must be in scientific notation (`d.dddddde±dd`, the format of every real reading) and a function must be a known name; otherwise it is treated like `E` (busy) and retried, without resending setters or ending the session. The format check cannot reject a misplaced reading that is itself in scientific notation, but range, resolution and function replies never pass it. A trigger-source reply must be a known source name (`auto`, `single`, …), so a late `1` cannot pause sampling. Because range and resolution readbacks are bare integers, a late one could equal the target by chance, so these settings need two matching readbacks in a row |
 | `RANGe?` for frequency/period does not return a range index; `DIGIt?` does not match the manual | No range control for these functions; `DIGIt` is not used |
 | After `:MEASure AUTO`, auto/manual cannot be read back, only the range auto-ranging picked | GUI and CLI show the current range as is and never claim "auto confirmed" |
 | With single trigger (`:TRIGger:SOURce SINGle`), `:MEASure?` keeps returning the held value; after a remote `:TRIGger:SINGle:TRIGger`, `:MEASure?` returns zero-length replies until the trigger is set back to auto | The trigger source is checked while sampling and sampling is refused unless it is AUTO; only switching back to auto trigger is offered |

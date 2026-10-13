@@ -58,6 +58,9 @@ _ALIASES = {"FREQ": "FREQUENCY", "PERI": "PERIOD", "RESISTANCE": "2WR", "FRESIST
             "CONTINUITY": "CONT", "CAPACITANCE": "CAP"}
 # Open circuit / overload in resistance, continuity and diode modes (the panel's -8.888 display).
 OPEN_SENTINEL = -8.888e3
+# Replies to :TRIGger:SOURce?; firmware 03.03 sends auto/single, the rest are spellings of
+# the manual's AUTO|SINGle|EXTernal (and generic SCPI) values.
+TRIGGER_SOURCES = frozenset({"AUTO", "SINGLE", "SING", "EXTERNAL", "EXT", "BUS", "IMMEDIATE", "IMM"})
 RESOLUTIONS = ("4½", "5½", "6½")
 
 
@@ -200,25 +203,32 @@ class MeterControl:
     # takes about 3.1 s per reading with shorted probes (more for large capacitors).
     slow_reading_ms = {"CAP": 10000}
 
-    def _apply(self, setter, command, accept, what):
+    def _apply(self, setter, command, accept, what, confirmations=1):
         """Send an absolute (idempotent) setter and poll its readback. Firmware 03.03 sometimes
         drops a setter while busy, so it is resent when the readback still shows a different
-        definite value. E (and R from RANGe?) means "busy": wait, a resend would restart ranging."""
+        definite value. E (and R from RANGe?) means "busy": wait, a resend would restart ranging.
+        Bare-integer readbacks (range, resolution) need `confirmations` matches in a row, so one
+        late reply to an earlier query that happens to equal the target cannot confirm alone."""
         self.send_command(setter)
         deadline = time.monotonic() + self.settle_s
         resend = time.monotonic() + self.resend_s
         last = None
+        matches = 0
         while True:
             try:
                 last = self.query(command)
                 if accept(last):
-                    return last
+                    matches += 1
+                    if matches >= confirmations:
+                        return last
+                    continue
+                matches = 0
                 if last != "R" and time.monotonic() >= resend:
                     log.info("Readback %r; resending %s", last, setter)
                     self.send_command(setter)
                     resend = time.monotonic() + self.resend_s
             except RejectedError:
-                last = "E"
+                last, matches = "E", 0
             if time.monotonic() >= deadline:
                 raise SettingError(f"{what} not confirmed by readback (last reply {last!r})")
             time.sleep(self.poll_s)
@@ -289,7 +299,8 @@ class MeterControl:
         index = int(index)
         if not 0 <= index < len(function.ranges):
             raise ValueError(f"{function.token} range must be 0..{len(function.ranges) - 1}")
-        self._apply(f":MEASure:{function.path} {index}", f":MEASure:{function.path}:RANGe?", lambda r: r == str(index), f"Range {index}")
+        self._apply(f":MEASure:{function.path} {index}", f":MEASure:{function.path}:RANGe?", lambda r: r == str(index), f"Range {index}",
+                    confirmations=2)
         return index
 
     def resolution(self, function=None):
@@ -303,11 +314,17 @@ class MeterControl:
             raise SettingError(f"{function.token} has no resolution setting")
         if not 0 <= index < len(RESOLUTIONS):
             raise ValueError("Resolution must be 0 (4½), 1 (5½) or 2 (6½)")
-        self._apply(f":RESOlution:{function.path} {index}", f":RESOlution:{function.path}?", lambda r: r == str(index), f"Resolution {index}")
+        self._apply(f":RESOlution:{function.path} {index}", f":RESOlution:{function.path}?", lambda r: r == str(index), f"Resolution {index}",
+                    confirmations=2)
         return index
 
     def trigger_source(self):
-        return self.query(":TRIGger:SOURce?").upper()
+        """Firmware 03.03 answers auto/single; anything else known is passed through, but a
+        reply that is no trigger source at all (a late reply such as 1 or DCV) means busy."""
+        reply = self.query(":TRIGger:SOURce?").upper()
+        if reply not in TRIGGER_SOURCES:
+            raise RejectedError(f"Unexpected :TRIGger:SOURce? reply {reply!r}")
+        return reply
 
     def set_trigger_auto(self):
         """Only AUTO is offered: in SINGLE mode firmware 03.03 keeps returning the held reading,

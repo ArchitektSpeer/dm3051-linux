@@ -154,6 +154,15 @@ class ControlTests(unittest.TestCase):
             m.set_function("ACV")
         self.assertEqual(sent, [":FUNCtion:VOLTage:AC"])
 
+    def test_late_matching_index_does_not_confirm_alone(self):
+        m = meter()
+        m.settle_s, m.resend_s = 0.3, 10.0
+        m.send_command = lambda c: None  # setter dropped; range stays at 2
+        late = iter(["4"])  # a late reply to an earlier RANGe? that equals the target
+        m.query = lambda c, late=late, real=m.query: (next(late, None) if "RANG" in c else None) or real(c)
+        with self.assertRaises(SettingError):
+            m.set_range(4)
+
     def test_unconfirmed_setting(self):
         m = meter()
         m.settle_s = 0.05
@@ -245,6 +254,14 @@ class SamplerTests(unittest.TestCase):
         m.trigger = "single"  # pressed on the panel
         with self.assertRaises(NotLiveError):
             take()
+
+    def test_stray_trigger_reply_is_busy_not_held(self):
+        m = meter(switch_rejects=0)
+        real = m.query
+        m.query = lambda c: "1" if c == ":TRIGger:SOURce?" else real(c)  # late reply, still AUTO
+        take = Sampler(m, grace=math.inf)
+        self.assertIsNone(take())
+        self.assertIn("TRIGger:SOURce", str(take.last_rejection))
 
     def test_refuses_held_readings(self):
         m = meter()

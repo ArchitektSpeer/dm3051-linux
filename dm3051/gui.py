@@ -342,12 +342,15 @@ def gui(args):
                                             title="Live record to CSV (every row is flushed to disk)")
         if not path:
             return
+        f = None
         try:
             f = open(path, "w", newline="", encoding="utf-8")
             writer = csv.writer(f)
             writer.writerow(FIELDS)
             f.flush()
         except OSError as exc:
+            if f:
+                f.close()
             messagebox.showerror("Live record failed", str(exc))
             return
         state["record"], state["recorded"] = (f, writer, path), 0
