@@ -1,0 +1,5 @@
+include README.md LICENSE requirements.txt run.sh
+recursive-include docs *.md *.png
+recursive-include tests *.py
+recursive-include udev *.rules
+recursive-include packaging *

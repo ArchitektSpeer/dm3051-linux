@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dm3051-linux"
+dynamic = ["version"]
+description = "Linux software for the RIGOL DM3051 multimeter over its legacy USB protocol"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = ["pyusb>=1.3,<2"]
+keywords = ["multimeter", "DMM", "RIGOL", "DM3051", "USB", "SCPI"]
+classifiers = [
+    "Environment :: X11 Applications",
+    "Intended Audience :: Science/Research",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+
+[project.urls]
+Homepage = "https://github.com/ArchitektSpeer/dm3051-linux"
+Issues = "https://github.com/ArchitektSpeer/dm3051-linux/issues"
+
+[project.scripts]
+dm3051 = "dm3051.app:main"
+
+[tool.setuptools]
+packages = ["dm3051"]
+
+[tool.setuptools.package-data]
+dm3051 = ["icon.png"]
+
+[tool.setuptools.dynamic]
+version = { attr = "dm3051.__version__" }

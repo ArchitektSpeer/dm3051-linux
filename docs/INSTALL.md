@@ -8,6 +8,10 @@ The GUI needs a running graphical session; on Wayland, Tk usually shows up throu
 
 Package sources are listed in SOURCES. On other distributions, run `python3 -m pip install -r requirements.txt` inside a virtual environment and install libusb and Tk from the distribution. Do not run a global pip install into the Arch system environment.
 
+## Installing as an application
+
+`packaging/install.sh` installs the program for the current user without root: a virtual environment in `~/.local/share/dm3051-linux/venv` (PyUSB comes from PyPI), the icon in `~/.local/share/icons/hicolor/scalable/apps/dm3051.svg`, and the menu entry `~/.local/share/applications/dm3051.desktop`. `--desktop` also copies the entry to the desktop folder. The argument is what to install: the source directory (default), a wheel or an sdist from the GitHub release. Running it again upgrades in place; `--uninstall` removes all of the above. The Python package itself is standard (`pyproject.toml`, console script `dm3051`), so `pipx install dm3051_linux-0.3.0-py3-none-any.whl` works too, just without the menu entry.
+
 ## USB permissions
 
 The shipped rule uses `TAG+="uaccess"` and matches only the two vendor IDs with product ID 09c4; it does not grant access to any other USB device.

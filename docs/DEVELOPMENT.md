@@ -14,6 +14,8 @@ tests/test_protocol.py   packet-level protocol regression tests (no hardware)
 tests/test_control.py    protocol quirks, setting readback/resend, sampling, statistics, CLI CSV
 tests/test_gui_helpers.py  GUI number parsing, readout formatting, axis ticks, decimation, settings file
 udev/70-dm3051.rules     permissions for this device only
+packaging/               app icon (SVG) and install.sh (per-user install with menu entry)
+pyproject.toml           package metadata; `python -m build` makes the release wheel and sdist
 docs/                    install, protocol, development, roadmap, troubleshooting, testing, sources
 ```
 
@@ -92,4 +94,4 @@ CSV columns are `timestamp,function,value,unit,raw`: the time is ISO 8601 with m
 
 ## Packaging and releases
 
-Runs straight from source; there is no build step. After a change, run `python3 -m unittest discover -s tests -v`, the CLI demo and the GUI demo, then do the hardware acceptance in TESTING. For a release, record the version, firmware, what was verified and the logs; do not claim compatibility with every model.
+Runs straight from source; there is no build step for development. Release packages are built with `python -m build` (sdist and wheel from `pyproject.toml`; the version comes from `dm3051.__version__`) and attached to the GitHub release. `dm3051/icon.png` is the window icon, rendered from `packaging/dm3051.svg`. After a change, run `python3 -m unittest discover -s tests -v`, the CLI demo and the GUI demo, then do the hardware acceptance in TESTING. For a release, record the version, firmware, what was verified and the logs; do not claim compatibility with every model.

@@ -39,6 +39,17 @@ python3 -m dm3051 --demo     # GUI with the simulator, no meter needed
 
 On other distributions, install libusb and Tk from your package manager and `pip install -r requirements.txt` in a virtual environment. [docs/INSTALL.md](docs/INSTALL.md) covers this, plus SSH/headless permissions.
 
+### Install as a desktop application
+
+Download `dm3051_linux-0.3.0-py3-none-any.whl` from the [latest release](https://github.com/ArchitektSpeer/dm3051-linux/releases/latest), or use the cloned source, and run the installer as your normal user (no sudo):
+
+```sh
+sh packaging/install.sh --desktop                                   # from the cloned source
+sh packaging/install.sh --desktop dm3051_linux-0.3.0-py3-none-any.whl  # or from the wheel
+```
+
+It installs into its own virtual environment under `~/.local/share/dm3051-linux`, adds **DM3051 Linux** to the application menu (and to the desktop with `--desktop`), and provides the `dm3051` command at `~/.local/share/dm3051-linux/venv/bin/dm3051`. Run it again to upgrade; `sh packaging/install.sh --uninstall` removes everything. The udev rule above is still needed once.
+
 ## Command line
 
 ```sh

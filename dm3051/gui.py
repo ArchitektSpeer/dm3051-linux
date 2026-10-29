@@ -161,7 +161,11 @@ def gui(args):
     import tkinter as tk
     from tkinter import ttk, filedialog, messagebox, font as tkfont
     settings = load_settings()
-    root = tk.Tk()
+    root = tk.Tk(className="dm3051")  # WM_CLASS Dm3051, matched by the .desktop file's StartupWMClass
+    try:
+        root.iconphoto(True, tk.PhotoImage(file=os.path.join(os.path.dirname(__file__), "icon.png")))
+    except tk.TclError:
+        pass
     root.title(T["title"] + (T["title_demo"] if args.demo else ""))
     root.configure(bg=BG)
     root.minsize(1100, 760)
