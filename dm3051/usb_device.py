@@ -207,8 +207,10 @@ class MeterControl:
         """Send an absolute (idempotent) setter and poll its readback. Firmware 03.03 sometimes
         drops a setter while busy, so it is resent when the readback still shows a different
         definite value. E (and R from RANGe?) means "busy": wait, a resend would restart ranging.
-        Bare-integer readbacks (range, resolution) need `confirmations` matches in a row, so one
-        late reply to an earlier query that happens to equal the target cannot confirm alone."""
+        Bare-integer readbacks (range, resolution) need `confirmations` matches with no different
+        definite value in between, so one late reply to an earlier query that happens to equal the
+        target cannot confirm alone. Busy replies (R, E) do not reset the count: on firmware 03.03
+        RANGe? alternates between the value and R."""
         self.send_command(setter)
         deadline = time.monotonic() + self.settle_s
         resend = time.monotonic() + self.resend_s
@@ -222,13 +224,14 @@ class MeterControl:
                     if matches >= confirmations:
                         return last
                     continue
-                matches = 0
+                if last != "R":  # R is busy and says nothing about the value
+                    matches = 0
                 if last != "R" and time.monotonic() >= resend:
                     log.info("Readback %r; resending %s", last, setter)
                     self.send_command(setter)
                     resend = time.monotonic() + self.resend_s
             except RejectedError:
-                last, matches = "E", 0
+                last = "E"
             if time.monotonic() >= deadline:
                 raise SettingError(f"{what} not confirmed by readback (last reply {last!r})")
             time.sleep(self.poll_s)

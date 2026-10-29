@@ -11,7 +11,10 @@ RIGOL no longer supports this model. Its USB interface also does not work with s
 - **All 12 functions:** DC/AC voltage, DC/AC current, 2- and 4-wire resistance, frequency, period, continuity, diode, capacitance and voltage ratio.
 - **Follows the front panel:** switch functions on the meter and the software notices.
 - **Remote control:** function, manual or auto range, resolution (4½ / 5½ / 6½), and switching the trigger back to auto. Every setting is confirmed by reading it back from the meter, except auto range, which the firmware cannot report.
-- **Statistics and alarms:** min / max / mean / σ, plus upper and lower limit alarms.
+- **Statistics and alarms:** min / max / mean / σ / peak-peak, upper and lower limits (SI prefixes accepted, e.g. `5m`, `1.2k`) with a pass/fail indicator and an out-of-limit count.
+- **Trend plot:** time axis, mean line, shaded out-of-limit bands, a hover readout for any point, an optional histogram, 100/300/1000/all-point windows and a freeze button. Gaps (pause, busy) and overloads break the line instead of being bridged.
+- **Relative mode (REL):** use the current reading as a reference, for example to null out lead resistance. It changes only what is shown; CSV files keep the raw readings.
+- **Keyboard:** F5 start/stop, Ctrl+S save, Ctrl+R live record, Ctrl+L reset statistics. Interval, limits, plot settings and window size are remembered in `~/.config/dm3051/gui.json`.
 - **CSV logging:** rows are written and flushed one at a time, so a crash loses nothing. Overload and open circuit leave the value empty and keep the raw reply.
 - **Honest data:** the software never invents a reading. Held values under single trigger, misplaced replies and readings taken while the function changed are all rejected.
 - **No hardware needed to try it:** `--demo` mode runs a simulator that mimics the meter's SCPI behaviour (busy replies after switching, firmware names, range clamping, open-circuit value). Timing and USB-level quirks such as late replies and EIO are covered by unit tests, not by the simulator.
@@ -64,7 +67,7 @@ with DM3051.open() as meter:
 
 ## Status
 
-Version 0.2.2 has been tested on one DM3051 (firmware 03.03.00.03.02.00) under Arch Linux with Python 3.14, PyUSB 1.3.1 and libusb 1.0.30.
+Version 0.3.0 has been tested on one DM3051 (firmware 03.03.00.03.02.00) under Arch Linux with Python 3.14, PyUSB 1.3.1 and libusb 1.0.30.
 
 | Area | State |
 |---|---|
@@ -100,7 +103,7 @@ Other firmware versions and the related DM3058/DM3068 are untested. Reports are 
 ## Development
 
 ```sh
-python3 -m unittest discover -s tests -v    # 43 tests, no hardware needed
+python3 -m unittest discover -s tests -v    # 53 tests, no hardware needed
 ```
 
 The real meter and the simulator share all measurement and settings logic. Only the byte transport differs, so most behaviour can be tested without hardware.

@@ -2,7 +2,7 @@
 
 Exact command spelling, parameter values and model differences follow the vendor Programming Guide (see SOURCES); page numbers are the manual's footer numbers. Where firmware 03.03 of the DM3051 disagrees with the manual, it is recorded in PROTOCOL.
 
-| Area | Manual section | Status (0.2.2) |
+| Area | Manual section | Status (0.3.0) |
 |---|---|---|
 | Identity and common commands | Common Commands 2-2 | `*IDN?` and `CMDSet?` used; `*RST` not offered (it restores factory settings); `*OPT?` rejected by the firmware |
 | Function selection | :FUNCtion 2-4 | Done: all 12 functions, panel function detected automatically, setter + readback + resend |
@@ -30,7 +30,7 @@ Exact command spelling, parameter values and model differences follow the vendor
 - Verify the values of 2WR, 4WR, CAP and DIODE with a known resistor (including a 4-wire connection), capacitor and diode; open and shorted behaviour is already verified.
 - The secondary frequency display of AC voltage/current (`:MEASure:VOLTage:AC:FREQuency?`) as an extra column.
 - Automatic reconnect after a disconnect (first confirm that a reconnect cannot receive replies from an old transaction).
-- Persistent settings (last interval, limits, window) and packaging (AUR PKGBUILD).
+- Packaging (AUR PKGBUILD). GUI settings (interval, limits, plot, window size) are already remembered since 0.3.0.
 
 Calibration and firmware updates are outside the scope of this project. Never use a calibration password or a factory reset as a connection fix.
 

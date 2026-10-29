@@ -8,9 +8,11 @@ dm3051/usb_device.py     legacy protocol transport (LegacyProtocol), measuring a
                          USB discovery/release (DM3051), function table
 dm3051/simulator.py      SCPI-level simulator SimulatedMeter: mimics the SCPI-level firmware quirks (not USB timing), for --demo and tests
 dm3051/app.py            arguments, CLI, Sampler, Stats, value formatting, CSV fields
-dm3051/gui.py            Tk interface and USB worker thread
+dm3051/gui.py            Tk interface and USB worker thread (language-neutral)
+dm3051/texts.py          every user-visible GUI string; a translation only replaces this table
 tests/test_protocol.py   packet-level protocol regression tests (no hardware)
 tests/test_control.py    protocol quirks, setting readback/resend, sampling, statistics, CLI CSV
+tests/test_gui_helpers.py  GUI number parsing, readout formatting, axis ticks, decimation, settings file
 udev/70-dm3051.rules     permissions for this device only
 docs/                    install, protocol, development, roadmap, troubleshooting, testing, sources
 ```
@@ -48,7 +50,7 @@ with DM3051.open(timeout_ms=3000) as meter:
 | `function()` | Current function (a `Function` tuple) |
 | `measure(expected=None)` | Reads function → reading → function again; overload gives `value=None`; a function change in between raises `RejectedError` |
 | `measure_dcv()` | Compatibility with 0.1: must be DCV and not overloaded, returns `(float, raw)` |
-| `set_function(name)` / `set_range(i or "AUTO")` / `set_resolution(i)` | Set and confirm by readback (`AUTO` is only sent, it cannot be read back). Range and resolution need two matching readbacks in a row. Resent when the readback is another definite value; never resent on busy or misplaced replies. Raises `SettingError` on failure, `ValueError` for out-of-range arguments |
+| `set_function(name)` / `set_range(i or "AUTO")` / `set_resolution(i)` | Set and confirm by readback (`AUTO` is only sent, it cannot be read back). Range and resolution need two matching readbacks with no different value in between (busy `R` replies do not count against it). Resent when the readback is another definite value; never resent on busy or misplaced replies. Raises `SettingError` on failure, `ValueError` for out-of-range arguments |
 | `range_index()` / `resolution()` | Read back the index, retrying briefly while busy; `None` when not available |
 | `trigger_source()` / `set_trigger_auto()` / `check_live()` | Trigger source checks; only switching back to AUTO is offered |
 | `status()` | Identity, function, unit, range, resolution, trigger, interval, math, command set |

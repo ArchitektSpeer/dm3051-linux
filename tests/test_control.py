@@ -163,6 +163,14 @@ class ControlTests(unittest.TestCase):
         with self.assertRaises(SettingError):
             m.set_range(4)
 
+    def test_range_confirmed_through_alternating_busy_replies(self):
+        m = meter()
+        m.settle_s = 1.0
+        replies = iter(["R", "3", "R", "3"])  # firmware 03.03: RANGe? alternates value and R
+        real = m.query
+        m.query = lambda c: next(replies, "3") if "RANG" in c else real(c)
+        self.assertEqual(m.set_range(3), 3)
+
     def test_unconfirmed_setting(self):
         m = meter()
         m.settle_s = 0.05
